@@ -33,7 +33,7 @@ class BaseLattice:
     center_col = [0, 2, 4]  # Center column of velocities
 
     # Base class for all lattices that handles the basic logic of LBM
-    def __init__(self, obstacle: torch.tensor, re: float):
+    def __init__(self, obstacle: torch.tensor, re: float, initial_rho: torch.tensor = None, initial_u: torch.tensor = None):
         # Create obstacle tensor from numpy array
         self.obstacle = obstacle.clone().to(device)
         self.nx, self.ny = obstacle.shape  # Number of nodes in x and y directions
@@ -43,8 +43,14 @@ class BaseLattice:
         self.omega = 1 / (3 * self.nulb + 0.5)  # relaxation parameter
 
         # Initialize macroscopic variables
-        self.rho = torch.ones((self.nx, self.ny), device=device).float()
-        self.u = torch.zeros((2, self.nx, self.ny), device=device).float()
+        if initial_rho is not None:
+            self.rho = torch.tensor(initial_rho.copy()).to(device)
+        else:
+            self.rho = torch.ones((self.nx, self.ny), device=device).float()
+        if initial_u is not None:
+            self.u = torch.tensor(initial_u.copy()).to(device)
+        else:
+            self.u = torch.zeros((2, self.nx, self.ny), device=device).float()
 
         # Initialize populations
         self.feq = torch.zeros((9, self.nx, self.ny), device=device).float()
@@ -59,7 +65,7 @@ class BaseLattice:
 
     def equilibrium(self):
         # Calculate equilibrium populations (Kruger et al., page 64)
-        usqr = 3 / 2 * (self.u[0] ** 2 + self.u[1] ** 2)  # TODO: try 3/2 * torch.einsum('ijk,ijk->jk', self.u, self.u)
+        usqr = 3 / 2 * (self.u[0] ** 2 + self.u[1] ** 2)
         cu = 3 * torch.einsum('ixy,ji->jxy', self.u, self.c)  # previously ijk,li->ljk
         self.feq = self.rho * self.w.view(9, 1, 1) * (1 + cu + 0.5 * cu ** 2 - usqr)
 
@@ -116,7 +122,7 @@ class BaseLattice:
                     mlups = self.nx * self.ny * counter / (dt * 1e6)
                     if save_data:
                         # push data to queue
-                        q.put((self.u, f"output/{i}.png"))
+                        q.put((self.u, f"output/{i//interval:05}.png"))
                     # Reset timer and counter
                     start = time.time()
                     counter = 0
@@ -124,6 +130,10 @@ class BaseLattice:
                 counter += 1
                 bar.text(f"MLUPS: {mlups:.2f}")
                 bar()
+
+        # Save final data to numpy files
+        np.save("output/last_u.npy", self.u.cpu().numpy())
+        np.save("output/last_rho.npy", self.rho.cpu().numpy())
 
         if save_data:
             # Stop thread for saving data

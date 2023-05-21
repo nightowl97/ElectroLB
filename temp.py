@@ -37,7 +37,7 @@ def plot_data(q):
 
 
 save_disk = True
-obstacle = generate_obstacle_tensor('inputbig.png')
+obstacle = generate_obstacle_tensor('input/inputbig.png')
 maxiter = 10000
 Re = 2000.
 # dimensions from obstacle tensor
