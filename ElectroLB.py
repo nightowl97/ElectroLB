@@ -71,7 +71,14 @@ class BaseLattice:
         self.feq = self.rho * self.w.view(9, 1, 1) * (1 + cu + 0.5 * cu ** 2 - usqr)
 
     def stream(self):
-        # Streaming
+        """
+        6---2---5
+        | \ | / |
+        3---0---1
+        | / | \ |
+        7---4---8
+        """
+        # Streaming periodically
         nx, ny = self.nx, self.ny
         self.fin[1, 1:, :] = self.fout[1, :nx - 1, :]  # vel 1 increases x
         self.fin[1, 0, :] = self.fout[1, -1, :]  # wrap
@@ -100,6 +107,8 @@ class BaseLattice:
         self.fin[8, 1:, :ny - 1] = self.fout[8, :nx - 1, 1:]
         self.fin[8, 0, :] = self.fout[8, -1, :]  # wrap right
         self.fin[8, :, -1] = self.fout[8, :, 0]  # wrap bottom
+
+        self.fin[0, :, :] = self.fout[0, :, :]  # vel 0 is stationary (dont act like you didn't forget this for 2 hours)
 
     def step(self):
         # Perform one LBM step
