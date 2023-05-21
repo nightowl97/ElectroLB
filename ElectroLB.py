@@ -33,7 +33,8 @@ class BaseLattice:
     center_col = [0, 2, 4]  # Center column of velocities
 
     # Base class for all lattices that handles the basic logic of LBM
-    def __init__(self, obstacle: torch.tensor, re: float, initial_rho: torch.tensor = None, initial_u: torch.tensor = None):
+    def __init__(self, obstacle: torch.tensor, re: float, initial_rho: torch.tensor = None,
+                 initial_u: torch.tensor = None):
         # Create obstacle tensor from numpy array
         self.obstacle = obstacle.clone().to(device)
         self.nx, self.ny = obstacle.shape  # Number of nodes in x and y directions
@@ -69,6 +70,37 @@ class BaseLattice:
         cu = 3 * torch.einsum('ixy,ji->jxy', self.u, self.c)  # previously ijk,li->ljk
         self.feq = self.rho * self.w.view(9, 1, 1) * (1 + cu + 0.5 * cu ** 2 - usqr)
 
+    def stream(self):
+        # Streaming
+        nx, ny = self.nx, self.ny
+        self.fin[1, 1:, :] = self.fout[1, :nx - 1, :]  # vel 1 increases x
+        self.fin[1, 0, :] = self.fout[1, -1, :]  # wrap
+        self.fin[3, :nx - 1, :] = self.fout[3, 1:, :]  # vel 3 decreases x
+        self.fin[3, -1, :] = self.fout[3, 0, :]  # wrap
+
+        self.fin[2, :, 1:] = self.fout[2, :, :ny - 1]  # vel 2 increases y
+        self.fin[2, :, 0] = self.fout[2, :, -1]  # wrap
+        self.fin[4, :, :ny - 1] = self.fout[4, :, 1:]  # vel 4 decreases y
+        self.fin[4, :, -1] = self.fout[4, :, 0]  # wrap
+
+        # vel 5 increases x and y simultaneously
+        self.fin[5, 1:, 1:] = self.fout[5, :nx - 1, :ny - 1]
+        self.fin[5, 0, :] = self.fout[5, -1, :]  # wrap right
+        self.fin[5, :, 0] = self.fout[5, :, -1]  # wrap top
+        # vel 7 decreases x and y simultaneously
+        self.fin[7, :nx - 1, :ny - 1] = self.fout[7, 1:, 1:]
+        self.fin[7, -1, :] = self.fout[7, 0, :]  # wrap left
+        self.fin[7, :, -1] = self.fout[7, :, 0]  # wrap bottom
+
+        # vel 6 decreases x and increases y
+        self.fin[6, :nx - 1, 1:] = self.fout[6, 1:, :ny - 1]
+        self.fin[6, -1, :] = self.fout[6, 0, :]  # wrap left
+        self.fin[6, :, 0] = self.fout[6, :, -1]  # wrap top
+        # vel 8 increases x and decreases y
+        self.fin[8, 1:, :ny - 1] = self.fout[8, :nx - 1, 1:]
+        self.fin[8, 0, :] = self.fout[8, -1, :]  # wrap right
+        self.fin[8, :, -1] = self.fout[8, :, 0]  # wrap bottom
+
     def step(self):
         # Perform one LBM step
         # Outlet BC
@@ -96,9 +128,7 @@ class BaseLattice:
         self.fout[:, self.obstacle] = self.fin[self.c_op][:, self.obstacle]
 
         # Streaming
-        for i in range(9):
-            temp = torch.roll(self.fout[i, :, :], shifts=int(self.c[i, 0].item()), dims=0)
-            self.fin[i, :, :] = torch.roll(temp, shifts=int(self.c[i, 1].item()), dims=1)
+        self.stream()
 
     def run(self, iterations: int, save_data: bool = True, interval: int = 100):
         # Launches LBM simulation and a parallel thread for saving data to disk
@@ -122,7 +152,7 @@ class BaseLattice:
                     mlups = self.nx * self.ny * counter / (dt * 1e6)
                     if save_data:
                         # push data to queue
-                        q.put((self.u, f"output/{i//interval:05}.png"))
+                        q.put((self.u, f"output/{i // interval:05}.png"))
                     # Reset timer and counter
                     start = time.time()
                     counter = 0
