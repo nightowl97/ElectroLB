@@ -35,11 +35,12 @@ class BaseLattice:
     # Base class for all lattices that handles the basic logic of LBM
     def __init__(self, obstacle: torch.tensor, re: float, initial_rho: torch.tensor = None,
                  initial_u: torch.tensor = None):
+        self.lattice_type = 'BaseLattice'
         # Create obstacle tensor from numpy array
         self.obstacle = obstacle.clone().to(device)
         self.nx, self.ny = obstacle.shape  # Number of nodes in x and y directions
         self.re = re  # Reynolds number
-        self.ulb = 0.04  # characteristic velocity
+        self.ulb = 0.04  # characteristic velocity (inlet)
         self.nulb = self.ulb * self.ny / self.re  # kinematic viscosity
         self.omega = 1 / (3 * self.nulb + 0.5)  # relaxation parameter
 
@@ -161,7 +162,7 @@ class BaseLattice:
                     mlups = self.nx * self.ny * counter / (dt * 1e6)
                     if save_data:
                         # push data to queue
-                        q.put((self.u, f"output/{i // interval:05}.png"))
+                        q.put((self.u, f"output/{i // interval:05}.png"))  # Five digit filename
                     # Reset timer and counter
                     start = time.time()
                     counter = 0
@@ -171,8 +172,8 @@ class BaseLattice:
                 bar()
 
         # Save final data to numpy files
-        np.save("output/last_u.npy", self.u.cpu().numpy())
-        np.save("output/last_rho.npy", self.rho.cpu().numpy())
+        np.save(f"output/{self.lattice_type}_last_u.npy", self.u.cpu().numpy())
+        np.save(f"output/{self.lattice_type}_last_rho.npy", self.rho.cpu().numpy())
 
         if save_data:
             # Stop thread for saving data
@@ -199,3 +200,121 @@ def generate_obstacle_tensor(file):
     # Black pixels are True, white pixels are False
     obstacle = torch.tensor(img_array == 0, dtype=torch.bool).T.to(device)
     return obstacle
+
+
+# Electrochemical Lattice
+class ElectroLattice(BaseLattice):
+    # Solves the convective-diffusion equation for a species in an electrochemical system
+    T = 298  # Kelvin
+    R = 8.3145  # J/mol.K
+    F = 96485  # C/mol
+    z = 1  # Number of electrons transferred
+    E_0 = 0.6  # Standard potential
+    alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
+
+    def __init__(self, v_field: torch.tensor, obstacle: torch.tensor, d: float, initial_rho: torch.tensor = None):
+        # TODO: Use Reynolds/Peclet equivalence
+        # Reynolds for Navier-Stokes is eq. to Peclet for convection-diffusion
+
+        self.v_field = v_field.clone().to(device)  # Velocity field
+
+        # use super class constructor
+        super().__init__(obstacle, 1)  # TODO: Temporarily set Re to 1 for testing
+        self.lattice_type = "Electrochemical Lattice"
+
+        assert self.v_field.shape == (2, self.nx, self.ny), "Velocity field must be of shape (2, nx, ny)"
+
+        # Diffusion coefficient
+        self.d = d
+        tau = 3 * self.d + 0.5  # Relaxation time
+        self.omega = 1 / tau
+
+        # Initialize scalar field for species concentration
+        self.rho = torch.zeros((1, self.nx, self.ny), device=device)
+        self.rho[0, 0, :] = 1  # Inlet concentration
+
+        self.feq = torch.zeros((9, self.nx, self.ny), device=device)
+        self.fin = self.feq.clone()
+        self.fout = self.feq.clone()
+
+    def macroscopic(self):
+        self.rho = self.fin.sum(0)
+
+    def equilibrium(self):
+        # Calculate equilibrium populations (Kruger page 304)
+        cu = torch.einsum('ixy,ji->jxy', self.v_field, self.c)
+        self.feq = self.w.view(9, 1, 1) * self.rho * (1 + 3 * cu)
+
+    def step(self):
+        # Perform one LBM step
+        # Outlet BC
+        # Equiv. to neumann BC on concentration (null flux)
+        self.fin[self.left_col, -1, :] = self.fin[self.left_col, -2, :]
+
+        self.macroscopic()
+
+        # Inlet BC
+        self.rho[0, :] = 0  # Inlet concentration
+
+        self.rho[self.nx // 4 - 10:self.nx // 4 + 10, self.ny // 2-10: self.ny // 2+10] = 1  # Inlet concentration
+
+        self.equilibrium()
+
+        # BGK collision
+        self.fout = self.fin - self.omega * (self.fin - self.feq)
+
+        # Bounce-back
+        self.fout[:, self.obstacle] = self.fin[self.c_op][:, self.obstacle]
+
+        # Streaming
+        self.stream()
+
+    def run(self, iterations: int, save_data: bool = True, interval: int = 100):
+        # Launches LBM simulation and a parallel thread for saving data to disk
+
+        if save_data:
+            # Create queue for saving data to disk
+            q = queue.Queue()
+            # Create thread for saving data
+            t = threading.Thread(target=self.save_data, args=(q,))
+            t.start()
+
+        # Run LBM for specified number of iterations
+        with alive_bar(iterations) as bar:
+            start = time.time()
+            counter = 0
+            for i in range(iterations):
+                self.step()  # Perform one LBM step
+                if i % interval == 0:
+                    # Calculate MLUPS by dividing number of nodes by time in seconds
+                    dt = time.time() - start
+                    mlups = self.nx * self.ny * counter / (dt * 1e6)
+                    if save_data:
+                        # push data to queue
+                        q.put((self.rho, f"output/{i // interval:05}.png"))  # Five digit filename
+                    # Reset timer and counter
+                    start = time.time()
+                    counter = 0
+
+                counter += 1
+                bar.text(f"MLUPS: {mlups:.2f}")
+                bar()
+
+        # Save final data to numpy files
+        np.save(f"output/{self.lattice_type}_last_rho.npy", self.rho.cpu().numpy())
+
+        if save_data:
+            # Stop thread for saving data
+            q.put((None, None))
+            t.join()
+
+    def save_data(self, q: queue.Queue):
+        while True:
+            data, filename = q.get()
+            if data is None:
+                break
+            plt.clf()
+            plt.axis('off')
+            data[self.obstacle] = np.nan
+            plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=2)
+            plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
