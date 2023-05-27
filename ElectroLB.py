@@ -10,7 +10,7 @@ import time
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-cmap = plt.get_cmap('Purples')
+cmap = plt.get_cmap('Greys')
 cmap.set_bad((1, 0, 0, 1))
 
 
@@ -256,8 +256,7 @@ class ElectroLattice(BaseLattice):
         # Inlet BC
         self.rho[0, :] = 0  # Inlet concentration
 
-        self.rho[self.nx // 4 - 10:self.nx // 4 + 10, self.ny // 2-10: self.ny // 2+10] = 1  # Inlet concentration
-
+        self.rho[self.nx // 4 - 10:self.nx // 4 + 10, self.ny // 4 - 30:self.ny // 4 + 30] = 1  # Inlet concentration
         self.equilibrium()
 
         # BGK collision
@@ -271,7 +270,6 @@ class ElectroLattice(BaseLattice):
 
     def run(self, iterations: int, save_data: bool = True, interval: int = 100):
         # Launches LBM simulation and a parallel thread for saving data to disk
-
         if save_data:
             # Create queue for saving data to disk
             q = queue.Queue()
@@ -316,5 +314,5 @@ class ElectroLattice(BaseLattice):
             plt.clf()
             plt.axis('off')
             data[self.obstacle] = np.nan
-            plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=2)
+            plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1.2)
             plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
