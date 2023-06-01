@@ -7,12 +7,20 @@ import numpy as np
 from alive_progress import alive_bar
 import time
 
+# To Generate ffmpeg video from images
+# ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 output.mp4
+
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-cmap = plt.get_cmap('Greys')
-cmap.set_bad((1, 0, 0, 1))
+cmap = plt.get_cmap('coolwarm')
+cmap.set_bad((0, 0, 0, 1))
 
+BLACK = np.asarray([0, 0, 0])
+WHITE = np.asarray([255, 255, 255])
+RED = np.asarray([255, 0, 0])
+BLUE = np.asarray([0, 0, 255])
+GREEN = np.asarray([0, 255, 0])
 
 class BaseLattice:
     """
@@ -196,9 +204,12 @@ class BaseLattice:
 
 def generate_obstacle_tensor(file):
     # Generate obstacle tensor from image file
-    img_array = np.asarray(Image.open(file).convert('L'))
+    img_array = np.asarray(Image.open(file))
     # Black pixels are True, white pixels are False
-    obstacle = torch.tensor(img_array == 0, dtype=torch.bool).T.to(device)
+
+    obstacle_solid = (img_array == BLACK).all(axis=2).T
+    obstacle_electrode = (img_array == BLUE).all(axis=2).T
+    obstacle = torch.tensor(obstacle_solid | obstacle_electrode, dtype=torch.bool).to(device)
     return obstacle
 
 
