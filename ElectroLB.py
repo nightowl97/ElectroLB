@@ -6,324 +6,175 @@ from PIL import Image
 import numpy as np
 from alive_progress import alive_bar
 import time
-
+from util import *
 # To Generate ffmpeg video from images
 # ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 output.mp4
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
-cmap = plt.get_cmap('coolwarm')
-cmap.set_bad((0, 0, 0, 1))
+"""Simulation parameters"""
+# Create obstacle tensor from numpy array
+obstacle = generate_obstacle_tensor('input/halfcell.png')
+obstacle = obstacle.clone().to(device)
+nx, ny = obstacle.shape  # Number of nodes in x and y directions
+re = 200  # Reynolds number
+ulb = 0.04  # characteristic velocity (inlet)
+nulb = ulb * ny / re  # kinematic viscosity
+omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 
-BLACK = np.asarray([0, 0, 0])
-WHITE = np.asarray([255, 255, 255])
-RED = np.asarray([255, 0, 0])
-BLUE = np.asarray([0, 0, 255])
-GREEN = np.asarray([0, 255, 0])
 
-class BaseLattice:
+def equilibrium():
+    global feq
+    # Calculate equilibrium populations (Kruger et al., page 64)
+    usqr = 3 / 2 * (u[0] ** 2 + u[1] ** 2)
+    cu = 3 * torch.einsum('ixy,ji->jxy', u, c)  # previously ijk,li->ljk
+    feq = rho * w.view(9, 1, 1) * (1 + cu + 0.5 * cu ** 2 - usqr)
+
+
+# Initialize macroscopic variables
+rho = torch.ones((nx, ny), device=device).float()
+u = torch.zeros((2, nx, ny), device=device).float()
+
+# Initialize populations
+feq = torch.zeros((9, nx, ny), device=device).float()
+equilibrium()  # Initialize equilibrium populations
+fin = feq.clone()  # Initialize incoming populations (pre-collision)
+fout = feq.clone()  # Initialize outgoing populations (post-collision)
+
+
+def macroscopic():
+    global rho, u
+    # Calculate macroscopic variables rho and u (Kruger et al., page 63)
+    rho = fin.sum(0)  # Sum along first axis (populations in each node)
+    u = torch.einsum('ji,jxy->ixy', c, fin) / rho
+
+
+def stream():
     """
-    Base class for all lattices that handles the basic logic of LBM for the Navier-Stokes equations
-    Outgoing directions:
     6---2---5
     | \ | / |
     3---0---1
     | / | \ |
     7---4---8
     """
-    c = torch.tensor([[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [-1, -1], [1, -1]],
-                     device=device).float()
-    c_op = torch.tensor([0, 3, 4, 1, 2, 7, 8, 5, 6], device=device)  # Opposite directions indices
-    w = torch.tensor([4 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 9, 1 / 36, 1 / 36, 1 / 36, 1 / 36], device=device)  # weights
-    right_col = [1, 5, 8]  # Right column of velocities
-    left_col = [3, 7, 6]  # Left column of velocities (order is important, see line 85 equilibrium function in inlet)
-    center_col = [0, 2, 4]  # Center column of velocities
+    # Streaming periodically
+    global nx, ny, fin, fout
+    fin[1, 1:, :] = fout[1, :nx - 1, :]  # vel 1 increases x
+    fin[1, 0, :] = fout[1, -1, :]  # wrap
+    fin[3, :nx - 1, :] = fout[3, 1:, :]  # vel 3 decreases x
+    fin[3, -1, :] = fout[3, 0, :]  # wrap
 
-    # Base class for all lattices that handles the basic logic of LBM
-    def __init__(self, obstacle: torch.tensor, re: float, initial_rho: torch.tensor = None,
-                 initial_u: torch.tensor = None):
-        self.lattice_type = 'BaseLattice'
-        # Create obstacle tensor from numpy array
-        self.obstacle = obstacle.clone().to(device)
-        self.nx, self.ny = obstacle.shape  # Number of nodes in x and y directions
-        self.re = re  # Reynolds number
-        self.ulb = 0.04  # characteristic velocity (inlet)
-        self.nulb = self.ulb * self.ny / self.re  # kinematic viscosity
-        self.omega = 1 / (3 * self.nulb + 0.5)  # relaxation parameter
+    fin[2, :, 1:] = fout[2, :, :ny - 1]  # vel 2 increases y
+    fin[2, :, 0] = fout[2, :, -1]  # wrap
+    fin[4, :, :ny - 1] = fout[4, :, 1:]  # vel 4 decreases y
+    fin[4, :, -1] = fout[4, :, 0]  # wrap
 
-        # Initialize macroscopic variables
-        if initial_rho is not None:
-            self.rho = torch.tensor(initial_rho.copy()).to(device)
-        else:
-            self.rho = torch.ones((self.nx, self.ny), device=device).float()
-        if initial_u is not None:
-            self.u = torch.tensor(initial_u.copy()).to(device)
-        else:
-            self.u = torch.zeros((2, self.nx, self.ny), device=device).float()
+    # vel 5 increases x and y simultaneously
+    fin[5, 1:, 1:] = fout[5, :nx - 1, :ny - 1]
+    fin[5, 0, :] = fout[5, -1, :]  # wrap right
+    fin[5, :, 0] = fout[5, :, -1]  # wrap top
+    # vel 7 decreases x and y simultaneously
+    fin[7, :nx - 1, :ny - 1] = fout[7, 1:, 1:]
+    fin[7, -1, :] = fout[7, 0, :]  # wrap left
+    fin[7, :, -1] = fout[7, :, 0]  # wrap bottom
 
-        # Initialize populations
-        self.feq = torch.zeros((9, self.nx, self.ny), device=device).float()
-        self.equilibrium()  # Initialize equilibrium populations
-        self.fin = self.feq.clone()  # Initialize incoming populations (pre-collision)
-        self.fout = self.feq.clone()  # Initialize outgoing populations (post-collision)
+    # vel 6 decreases x and increases y
+    fin[6, :nx - 1, 1:] = fout[6, 1:, :ny - 1]
+    fin[6, -1, :] = fout[6, 0, :]  # wrap left
+    fin[6, :, 0] = fout[6, :, -1]  # wrap top
+    # vel 8 increases x and decreases y
+    fin[8, 1:, :ny - 1] = fout[8, :nx - 1, 1:]
+    fin[8, 0, :] = fout[8, -1, :]  # wrap right
+    fin[8, :, -1] = fout[8, :, 0]  # wrap bottom
 
-    def macroscopic(self):
-        # Calculate macroscopic variables rho and u (Kruger et al., page 63)
-        self.rho = self.fin.sum(0)  # Sum along first axis (populations in each node)
-        self.u = torch.einsum('ji,jxy->ixy', self.c, self.fin) / self.rho
-
-    def equilibrium(self):
-        # Calculate equilibrium populations (Kruger et al., page 64)
-        usqr = 3 / 2 * (self.u[0] ** 2 + self.u[1] ** 2)
-        cu = 3 * torch.einsum('ixy,ji->jxy', self.u, self.c)  # previously ijk,li->ljk
-        self.feq = self.rho * self.w.view(9, 1, 1) * (1 + cu + 0.5 * cu ** 2 - usqr)
-
-    def stream(self):
-        """
-        6---2---5
-        | \ | / |
-        3---0---1
-        | / | \ |
-        7---4---8
-        """
-        # Streaming periodically
-        nx, ny = self.nx, self.ny
-        self.fin[1, 1:, :] = self.fout[1, :nx - 1, :]  # vel 1 increases x
-        self.fin[1, 0, :] = self.fout[1, -1, :]  # wrap
-        self.fin[3, :nx - 1, :] = self.fout[3, 1:, :]  # vel 3 decreases x
-        self.fin[3, -1, :] = self.fout[3, 0, :]  # wrap
-
-        self.fin[2, :, 1:] = self.fout[2, :, :ny - 1]  # vel 2 increases y
-        self.fin[2, :, 0] = self.fout[2, :, -1]  # wrap
-        self.fin[4, :, :ny - 1] = self.fout[4, :, 1:]  # vel 4 decreases y
-        self.fin[4, :, -1] = self.fout[4, :, 0]  # wrap
-
-        # vel 5 increases x and y simultaneously
-        self.fin[5, 1:, 1:] = self.fout[5, :nx - 1, :ny - 1]
-        self.fin[5, 0, :] = self.fout[5, -1, :]  # wrap right
-        self.fin[5, :, 0] = self.fout[5, :, -1]  # wrap top
-        # vel 7 decreases x and y simultaneously
-        self.fin[7, :nx - 1, :ny - 1] = self.fout[7, 1:, 1:]
-        self.fin[7, -1, :] = self.fout[7, 0, :]  # wrap left
-        self.fin[7, :, -1] = self.fout[7, :, 0]  # wrap bottom
-
-        # vel 6 decreases x and increases y
-        self.fin[6, :nx - 1, 1:] = self.fout[6, 1:, :ny - 1]
-        self.fin[6, -1, :] = self.fout[6, 0, :]  # wrap left
-        self.fin[6, :, 0] = self.fout[6, :, -1]  # wrap top
-        # vel 8 increases x and decreases y
-        self.fin[8, 1:, :ny - 1] = self.fout[8, :nx - 1, 1:]
-        self.fin[8, 0, :] = self.fout[8, -1, :]  # wrap right
-        self.fin[8, :, -1] = self.fout[8, :, 0]  # wrap bottom
-
-        self.fin[0, :, :] = self.fout[0, :, :]  # vel 0 is stationary (dont act like you didn't forget this for 2 hours)
-
-    def step(self):
-        # Perform one LBM step
-        # Outlet BC
-        # Doing this first is more stable for some reason
-        self.fin[self.left_col, -1, :] = self.fin[self.left_col, -2, :]
-
-        self.macroscopic()  # Calculate macroscopic variables
-        # Impose conditions on macroscopic variables
-        self.u[0, 0, :] = self.ulb * torch.ones(self.ny, device=device).float()
-        self.rho[0, :] = 1 / (1 - self.u[0, 0, :]) * (torch.sum(self.fin[self.center_col, 0, :], dim=0) +
-                                                      2 * torch.sum(self.fin[self.left_col, 0, :], dim=0))
-
-        # Equilibrium
-        self.equilibrium()
-
-        # Boundary conditions on populations
-        # Zou-He BC Fin = Feq + Fin(op) - Feq(op)
-        self.fin[self.right_col, 0, :] = self.feq[self.right_col, 0, :] + self.fin[self.left_col, 0, :] \
-                                         - self.feq[self.left_col, 0, :]
-
-        # BGK collision
-        self.fout = self.fin - self.omega * (self.fin - self.feq)
-
-        # Bounce-back
-        self.fout[:, self.obstacle] = self.fin[self.c_op][:, self.obstacle]
-
-        # Streaming
-        self.stream()
-
-    def run(self, iterations: int, save_data: bool = True, interval: int = 100):
-        # Launches LBM simulation and a parallel thread for saving data to disk
-
-        if save_data:
-            # Create queue for saving data to disk
-            q = queue.Queue()
-            # Create thread for saving data
-            t = threading.Thread(target=self.save_data, args=(q,))
-            t.start()
-
-        # Run LBM for specified number of iterations
-        with alive_bar(iterations) as bar:
-            start = time.time()
-            counter = 0
-            for i in range(iterations):
-                self.step()  # Perform one LBM step
-                if i % interval == 0:
-                    # Calculate MLUPS by dividing number of nodes by time in seconds
-                    dt = time.time() - start
-                    mlups = self.nx * self.ny * counter / (dt * 1e6)
-                    if save_data:
-                        # push data to queue
-                        q.put((self.u, f"output/{i // interval:05}.png"))  # Five digit filename
-                    # Reset timer and counter
-                    start = time.time()
-                    counter = 0
-
-                counter += 1
-                bar.text(f"MLUPS: {mlups:.2f}")
-                bar()
-
-        # Save final data to numpy files
-        np.save(f"output/{self.lattice_type}_last_u.npy", self.u.cpu().numpy())
-        np.save(f"output/{self.lattice_type}_last_rho.npy", self.rho.cpu().numpy())
-
-        if save_data:
-            # Stop thread for saving data
-            q.put((None, None))
-            t.join()
-
-    def save_data(self, q: queue.Queue):
-        # Save data to disk by running a separate thread that gets data from a queue
-        while True:
-            data, filename = q.get()
-            if data is None:
-                break
-            plt.clf()
-            plt.axis('off')
-            usqr = data[0] ** 2 + data[1] ** 2
-            usqr[self.obstacle] = np.nan
-            plt.imshow(np.sqrt(usqr.cpu().numpy().transpose()), cmap=cmap)
-            plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
+    fin[0, :, :] = fout[0, :, :]  # vel 0 is stationary (dont act like you didn't forget this for 2 hours)
 
 
-def generate_obstacle_tensor(file):
-    # Generate obstacle tensor from image file
-    img_array = np.asarray(Image.open(file))
-    # Black pixels are True, white pixels are False
+def step():
+    global fin, fout, rho, u
+    # Perform one LBM step
+    # Outlet BC
+    # Doing this first is more stable for some reason
+    fin[left_col, -1, :] = fin[left_col, -2, :]
 
-    obstacle_solid = (img_array == BLACK).all(axis=2).T
-    obstacle_electrode = (img_array == BLUE).all(axis=2).T
-    obstacle = torch.tensor(obstacle_solid | obstacle_electrode, dtype=torch.bool).to(device)
-    return obstacle
+    macroscopic()  # Calculate macroscopic variables
+    # Impose conditions on macroscopic variables
+    u[0, 0, :] = ulb * torch.ones(ny, device=device).float()
+    rho[0, :] = 1 / (1 - u[0, 0, :]) * (torch.sum(fin[center_col, 0, :], dim=0) +
+                                                  2 * torch.sum(fin[left_col, 0, :], dim=0))
+
+    # Equilibrium
+    equilibrium()
+
+    # Boundary conditions on populations
+    # Zou-He BC Fin = Feq + Fin(op) - Feq(op)
+    fin[right_col, 0, :] = feq[right_col, 0, :] + fin[left_col, 0, :] - feq[left_col, 0, :]
+
+    # BGK collision
+    fout = fin - omega * (fin - feq)
+
+    # Bounce-back
+    fout[:, obstacle] = fin[c_op][:, obstacle]
+
+    # Streaming
+    stream()
 
 
-# Electrochemical Lattice
-class ElectroLattice(BaseLattice):
-    # Solves the convective-diffusion equation for a species in an electrochemical system
-    T = 298  # Kelvin
-    R = 8.3145  # J/mol.K
-    F = 96485  # C/mol
-    z = 1  # Number of electrons transferred
-    E_0 = 0.6  # Standard potential
-    alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
+def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
+    # Launches LBM simulation and a parallel thread for saving data to disk
 
-    def __init__(self, v_field: torch.tensor, obstacle: torch.tensor, d: float, initial_rho: torch.tensor = None):
-        # TODO: Use Reynolds/Peclet equivalence
-        # Reynolds for Navier-Stokes is eq. to Peclet for convection-diffusion
+    if save_to_disk:
+        # Create queue for saving data to disk
+        q = queue.Queue()
+        # Create thread for saving data
+        t = threading.Thread(target=save_data, args=(q,))
+        t.start()
 
-        self.v_field = v_field.clone().to(device)  # Velocity field
+    # Run LBM for specified number of iterations
+    with alive_bar(iterations) as bar:
+        start = time.time()
+        counter = 0
+        for i in range(iterations):
+            step()  # Perform one LBM step
+            if i % interval == 0:
+                # Calculate MLUPS by dividing number of nodes by time in seconds
+                dt = time.time() - start
+                mlups = nx * ny * counter / (dt * 1e6)
+                if save_to_disk:
+                    # push data to queue
+                    q.put((u, f"output/{i // interval:05}.png"))  # Five digit filename
+                # Reset timer and counter
+                start = time.time()
+                counter = 0
 
-        # use super class constructor
-        super().__init__(obstacle, 1)  # TODO: Temporarily set Re to 1 for testing
-        self.lattice_type = "Electrochemical Lattice"
+            counter += 1
+            bar.text(f"MLUPS: {mlups:.2f}")
+            bar()
 
-        assert self.v_field.shape == (2, self.nx, self.ny), "Velocity field must be of shape (2, nx, ny)"
+    # Save final data to numpy files
+    np.save(f"output/BaseLattice_last_u.npy", u.cpu().numpy())
+    np.save(f"output/BaseLattice_last_rho.npy", rho.cpu().numpy())
 
-        # Diffusion coefficient
-        self.d = d
-        tau = 3 * self.d + 0.5  # Relaxation time
-        self.omega = 1 / tau
+    if save_to_disk:
+        # Stop thread for saving data
+        q.put((None, None))
+        t.join()
 
-        # Initialize scalar field for species concentration
-        self.rho = torch.zeros((1, self.nx, self.ny), device=device)
-        self.rho[0, 0, :] = 1  # Inlet concentration
 
-        self.feq = torch.zeros((9, self.nx, self.ny), device=device)
-        self.fin = self.feq.clone()
-        self.fout = self.feq.clone()
+def save_data(q: queue.Queue):
+    # Save data to disk by running a separate thread that gets data from a queue
+    while True:
+        data, filename = q.get()
+        if data is None:
+            break
+        plt.clf()
+        plt.axis('off')
+        usqr = data[0] ** 2 + data[1] ** 2
+        usqr[obstacle] = np.nan
+        plt.imshow(np.sqrt(usqr.cpu().numpy().transpose()), cmap=cmap)
+        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
 
-    def macroscopic(self):
-        self.rho = self.fin.sum(0)
 
-    def equilibrium(self):
-        # Calculate equilibrium populations (Kruger page 304)
-        cu = torch.einsum('ixy,ji->jxy', self.v_field, self.c)
-        self.feq = self.w.view(9, 1, 1) * self.rho * (1 + 3 * cu)
-
-    def step(self):
-        # Perform one LBM step
-        # Outlet BC
-        # Equiv. to neumann BC on concentration (null flux)
-        self.fin[self.left_col, -1, :] = self.fin[self.left_col, -2, :]
-
-        self.macroscopic()
-
-        # Inlet BC
-        self.rho[0, :] = 0  # Inlet concentration
-
-        self.rho[self.nx // 4 - 10:self.nx // 4 + 10, self.ny // 4 - 30:self.ny // 4 + 30] = 1  # Inlet concentration
-        self.equilibrium()
-
-        # BGK collision
-        self.fout = self.fin - self.omega * (self.fin - self.feq)
-
-        # Bounce-back
-        self.fout[:, self.obstacle] = self.fin[self.c_op][:, self.obstacle]
-
-        # Streaming
-        self.stream()
-
-    def run(self, iterations: int, save_data: bool = True, interval: int = 100):
-        # Launches LBM simulation and a parallel thread for saving data to disk
-        if save_data:
-            # Create queue for saving data to disk
-            q = queue.Queue()
-            # Create thread for saving data
-            t = threading.Thread(target=self.save_data, args=(q,))
-            t.start()
-
-        # Run LBM for specified number of iterations
-        with alive_bar(iterations) as bar:
-            start = time.time()
-            counter = 0
-            for i in range(iterations):
-                self.step()  # Perform one LBM step
-                if i % interval == 0:
-                    # Calculate MLUPS by dividing number of nodes by time in seconds
-                    dt = time.time() - start
-                    mlups = self.nx * self.ny * counter / (dt * 1e6)
-                    if save_data:
-                        # push data to queue
-                        q.put((self.rho, f"output/{i // interval:05}.png"))  # Five digit filename
-                    # Reset timer and counter
-                    start = time.time()
-                    counter = 0
-
-                counter += 1
-                bar.text(f"MLUPS: {mlups:.2f}")
-                bar()
-
-        # Save final data to numpy files
-        np.save(f"output/{self.lattice_type}_last_rho.npy", self.rho.cpu().numpy())
-
-        if save_data:
-            # Stop thread for saving data
-            q.put((None, None))
-            t.join()
-
-    def save_data(self, q: queue.Queue):
-        while True:
-            data, filename = q.get()
-            if data is None:
-                break
-            plt.clf()
-            plt.axis('off')
-            data[self.obstacle] = np.nan
-            plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1.2)
-            plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
+if __name__ == '__main__':
+    run(10000, save_to_disk=True)
