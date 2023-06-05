@@ -46,7 +46,7 @@ cov = np.asarray([[1, 0],
                   [0, 10]])  # Covariance matrix
 
 # Generate the kernel
-kernel = gaussian_kernel(size, mean, .1 * cov, angle=45)
+kernel = gaussian_kernel(size, mean, .1 * cov, angle=np.pi / 4)
 
 plt.imshow(kernel, interpolation='none')
 plt.axis('off')

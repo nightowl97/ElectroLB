@@ -15,13 +15,14 @@ device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/halfcell.png')
+obstacle = generate_obstacle_tensor('input/fullcell.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 200  # Reynolds number
-ulb = 0.04  # characteristic velocity (inlet)
+re = .04  # Reynolds number
+ulb = 0.0001  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
+print(f"omega: {omega}")
 
 
 def equilibrium():
