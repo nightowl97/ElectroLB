@@ -8,7 +8,7 @@ from scipy.signal import convolve2d
 
 cmap = matplotlib.colormaps['Greys']
 
-nx, ny = 300, 300  # domain dimensions
+nx, ny = 1000, 1000  # domain dimensions
 target_rho = 0.7
 
 
@@ -43,10 +43,10 @@ def gaussian_kernel(size: int, mean: float, cov: np.ndarray, angle: float = 0) -
 size = 101  # Size of the kernel. Should be odd, to have a center pixel
 mean = 0   # Mean. Should be 0 for a centered kernel
 cov = np.asarray([[1, 0],
-                  [0, 1]])  # Covariance matrix
+                  [0, 10]])  # Covariance matrix
 
 # Generate the kernel
-kernel = gaussian_kernel(size, mean, .1 * cov, angle=np.pi / 4)
+kernel = gaussian_kernel(size, mean, .1 * cov, angle=np.pi / 9)
 
 plt.imshow(kernel, interpolation='none')
 plt.axis('off')
@@ -67,5 +67,5 @@ final = smooth > cutoff
 
 plt.imshow(final, cmap=cmap, interpolation='none')
 plt.axis('off')
-plt.savefig(f'output/pdrop0_1.png', bbox_inches='tight', pad_inches=0, dpi=600)
+plt.savefig(f'output/pdrop20deg11.png', bbox_inches='tight', pad_inches=0, dpi=600)
 # plt.show()

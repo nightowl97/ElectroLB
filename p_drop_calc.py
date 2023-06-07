@@ -1,5 +1,6 @@
 import matplotlib.pyplot as plt
 import torch
+import matplotlib as mpl
 import threading
 import queue
 from PIL import Image
@@ -8,18 +9,23 @@ from alive_progress import alive_bar
 import time
 from util import *
 # To Generate ffmpeg video from images
-# ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 output.mp4
+# ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 -pix_fmt yuv420p output.mp4
+
+plt.rcParams.update({
+    "text.usetex": True,
+    "font.family": "Computer Modern"
+})
 
 # Use GPU if available
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/pdrop0_1.png')
+obstacle = generate_obstacle_tensor('input/pdrop/pdrop3_vert3.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 re = 10  # Reynolds number
-ulb = 0.005  # characteristic velocity (inlet)
+ulb = 0.001  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 print(f"omega: {omega}")
@@ -122,8 +128,16 @@ def step():
     stream()
 
 
-def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
+def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
+
+    global rho, u, fin, fout
+    if continue_last:  # Continue last computation
+        rho = torch.from_numpy(np.load("output/BaseLattice_last_rho.npy")).to(device)
+        u = torch.from_numpy(np.load("output/BaseLattice_last_u.npy")).to(device)
+        equilibrium()
+        fin = feq.clone()  # Initialize incoming populations (pre-collision)
+        fout = feq.clone()  # Initialize outgoing populations (post-collision)
 
     if save_to_disk:
         # Create queue for saving data to disk
@@ -144,14 +158,14 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
                 mlups = nx * ny * counter / (dt * 1e6)
                 if save_to_disk:
                     # push data to queue
-                    q.put((u, f"output/{i // interval:05}.png"))  # Five digit filename
+                    q.put(((u, rho), f"output/{i // interval:05}.png"))  # Five digit filename
                 # Reset timer and counter
                 start = time.time()
                 counter = 0
 
             counter += 1
-            ddp = np.mean(rho[0, :].cpu().numpy()) - np.mean(rho[-3, :].cpu().numpy())
-            bar.text(f"MLUPS: {mlups:.2f}, DDP: {ddp:.5f}")
+            ddp[i] = torch.mean(rho[1, :]) - torch.mean(rho[-2, :])
+            bar.text(f"MLUPS: {mlups:.2f}, DDP: {ddp[i]:.7f}")
             bar()
 
     # Save final data to numpy files
@@ -170,13 +184,34 @@ def save_data(q: queue.Queue):
         data, filename = q.get()
         if data is None:
             break
-        plt.clf()
-        plt.axis('off')
-        usqr = data[0] ** 2 + data[1] ** 2
-        usqr[obstacle] = np.nan
-        plt.imshow(np.sqrt(usqr.cpu().numpy().transpose()), cmap=cmap)
-        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
+
+        # Preprocessing before plotting
+        velocity = torch.sqrt(data[0][0] ** 2 + data[0][1] ** 2)  # module of velocity
+        velocity /= ulb # normalize
+        density = data[1]
+        velocity[obstacle] = np.nan
+        density[obstacle] = np.nan
+
+        # Plot both macroscopic variables
+        fig, (ax0, ax1) = plt.subplots(2, 1)
+        cax0 = ax0.imshow(velocity.cpu().numpy().transpose(), cmap=cmap)
+        cax1 = ax1.imshow(density.cpu().numpy().transpose(), cmap=cmap, vmin=1, vmax=1.05)
+        ax0.set_title(r"Normalized lattice velocity $\frac{\mathbf{||u||}}{||\mathbf{u}_{inlet}||}$")
+        ax1.set_title(r"Normalized density $\rho$")
+        ax0.axis("off")
+        ax1.axis("off")
+        fig.colorbar(cax0, ax=ax0)
+        fig.colorbar(cax1, ax=ax1)
+        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=800)
+        plt.close(fig)
 
 
 if __name__ == '__main__':
-    run(50000, save_to_disk=True)
+    iterations = 30000
+    ddp = torch.zeros(iterations, device=device)  # Keep track of pressure drop evolution
+    run(iterations, save_to_disk=True, interval=1000, continue_last=False)
+
+    plt.clf()
+    plt.plot(np.arange(iterations), ddp.cpu().numpy(), label="Pressure drop")  # Plot pressure drop evolution
+    plt.show()
+    print(ddp[-1].item())
