@@ -15,28 +15,39 @@ z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
 alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
 
-electrode = generate_electrode_tensor("input/halfcell.png")
-obstacle = generate_obstacle_tensor("input/halfcell.png")
+electrode = generate_electrode_tensor("input/ecell.png")
+obstacle = generate_obstacle_tensor("input/ecell.png")
 v_field = torch.from_numpy(np.load('output/BaseLattice_last_u.npy'))
 v_field = v_field.clone().to(device)  # Velocity field
 
 
 """Simulation parameters"""
 # Diffusion coefficient
-d = 0.05
+d = 1
 tau = 3 * d + 0.5  # Relaxation time
 omega = 1 / tau  # TODO: add independent omega for each species
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 
 """Initialization"""
 # Initialize scalar field for species concentration
-rho_ox = torch.zeros((nx, ny), device=device)
-rho_red = torch.zeros((nx, ny), device=device)
+rho_ox = torch.ones((nx, ny), device=device)
+rho_red = torch.ones((nx, ny), device=device)
 rho_ox[0, :] = 1  # Inlet concentration
 rho_red[0, :] = 1  # Inlet concentration
 
 feq_ox = torch.zeros((9, nx, ny), device=device)
 feq_red = torch.zeros((9, nx, ny), device=device)
+
+
+def equilibrium():
+    global feq_ox, feq_red
+    # Calculate equilibrium populations (Kruger page 304)
+    cu = torch.einsum('ixy,ji->jxy', v_field, c)  # TODO: Precalculate if v_field is constant
+    feq_ox = w.view(9, 1, 1) * rho_ox * (1 + 3 * cu)
+    feq_red = w.view(9, 1, 1) * rho_red * (1 + 3 * cu)
+
+
+equilibrium()
 
 fin_ox = feq_ox.clone()
 fin_red = feq_red.clone()
@@ -61,14 +72,6 @@ def macroscopic():
     global rho_ox, rho_red
     rho_ox = fin_ox.sum(0)
     rho_red = fin_red.sum(0)
-
-
-def equilibrium():
-    global feq_ox, feq_red
-    # Calculate equilibrium populations (Kruger page 304)
-    cu = torch.einsum('ixy,ji->jxy', v_field, c)  # TODO: Precalculate if v_field is constant
-    feq_ox = w.view(9, 1, 1) * rho_ox * (1 + 3 * cu)
-    feq_red = w.view(9, 1, 1) * rho_red * (1 + 3 * cu)
 
 
 def stream(fin, fout):
@@ -124,7 +127,7 @@ def step():
 
     # Inlet BC
     rho_ox[0, :] = 1  # Inlet concentration
-    rho_red[0, :] = .5  # Inlet concentration
+    rho_red[0, :] = 1  # Inlet concentration
 
     equilibrium()
 
@@ -134,11 +137,11 @@ def step():
 
     # Electrode BC
     e_nernst = E_0 + torch.log(rho_ox[electrode] / rho_red[electrode])
-    j = 1e-3 * (rho_ox[electrode] * torch.exp(0.5 * (F / (R * T)) * (e - e_nernst)) -
-                rho_red[electrode] * torch.exp(-0.5 * (F / (R * T)) * (e - e_nernst)))
+    j = 1e-3 * (rho_ox[electrode] * torch.exp(0.5 * (e - e_nernst)) -
+                rho_red[electrode] * torch.exp(-0.5 * (e - e_nernst)))
 
-    source_ox[electrode] = j
-    source_red[electrode] = -j
+    source_ox[electrode] = -j
+    source_red[electrode] = j
 
     # BGK collision
     fout_ox = fin_ox - omega * (fin_ox - feq_ox) + torch.einsum('i,jk->ijk', w, source_ox)
@@ -211,7 +214,7 @@ def save_data(q: queue.Queue):
         plt.clf()
         plt.axis('off')
         data[obstacle] = np.nan
-        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1.1)
+        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap)
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
 
 

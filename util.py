@@ -21,7 +21,6 @@ cmap = plt.get_cmap('coolwarm')
 cmap.set_bad((0, 0, 0, 1))
 
 """
-Base lattice that handles the basic logic of LBM for the Navier-Stokes equations
 Outgoing directions:
 6---2---5
 | \ | / |
@@ -46,7 +45,7 @@ def generate_obstacle_tensor(file):
 
     obstacle_solid = (img_array == BLACK).all(axis=2).T
     obstacle_electrode = (img_array == BLUE).all(axis=2).T
-    obstacle = torch.tensor(obstacle_solid | obstacle_electrode, dtype=torch.bool).to(device)
+    obstacle = torch.tensor(obstacle_solid, dtype=torch.bool).to(device)
     return obstacle
 
 
