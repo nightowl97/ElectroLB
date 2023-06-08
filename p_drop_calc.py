@@ -11,13 +11,6 @@ from util import *
 # To Generate ffmpeg video from images
 # ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 -pix_fmt yuv420p output.mp4
 
-plt.rcParams.update({
-    "text.usetex": True,
-    "font.family": "Computer Modern"
-})
-
-# Use GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
@@ -28,7 +21,6 @@ re = 10  # Reynolds number
 ulb = 0.001  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
-print(f"omega: {omega}")
 
 
 def equilibrium():
@@ -178,35 +170,8 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         t.join()
 
 
-def save_data(q: queue.Queue):
-    # Save data to disk by running a separate thread that gets data from a queue
-    while True:
-        data, filename = q.get()
-        if data is None:
-            break
-
-        # Preprocessing before plotting
-        velocity = torch.sqrt(data[0][0] ** 2 + data[0][1] ** 2)  # module of velocity
-        velocity /= ulb # normalize
-        density = data[1]
-        velocity[obstacle] = np.nan
-        density[obstacle] = np.nan
-
-        # Plot both macroscopic variables
-        fig, (ax0, ax1) = plt.subplots(2, 1)
-        cax0 = ax0.imshow(velocity.cpu().numpy().transpose(), cmap=cmap)
-        cax1 = ax1.imshow(density.cpu().numpy().transpose(), cmap=cmap, vmin=1, vmax=1.05)
-        ax0.set_title(r"Normalized lattice velocity $\frac{\mathbf{||u||}}{||\mathbf{u}_{inlet}||}$")
-        ax1.set_title(r"Normalized density $\rho$")
-        ax0.axis("off")
-        ax1.axis("off")
-        fig.colorbar(cax0, ax=ax0)
-        fig.colorbar(cax1, ax=ax1)
-        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=800)
-        plt.close(fig)
-
-
 if __name__ == '__main__':
+    print(f"omega: {omega}")
     iterations = 30000
     ddp = torch.zeros(iterations, device=device)  # Keep track of pressure drop evolution
     run(iterations, save_to_disk=True, interval=1000, continue_last=False)

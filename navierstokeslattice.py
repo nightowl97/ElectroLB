@@ -8,18 +8,15 @@ from alive_progress import alive_bar
 import time
 from util import *
 # To Generate ffmpeg video from images
-# ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 output.mp4
-
-# Use GPU if available
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+# ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 -pix_fmt yuv420p output.mp4
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/fullcell.png')
+obstacle = generate_obstacle_tensor('input/halfcell.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = .04  # Reynolds number
-ulb = 0.0001  # characteristic velocity (inlet)
+re = 10  # Reynolds number
+ulb = 0.04  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 print(f"omega: {omega}")
@@ -122,14 +119,21 @@ def step():
     stream()
 
 
-def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
+def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
+    global rho, u, fin, fout
+    if continue_last:  # Continue last computation
+        rho = torch.from_numpy(np.load("output/BaseLattice_last_rho.npy")).to(device)
+        u = torch.from_numpy(np.load("output/BaseLattice_last_u.npy")).to(device)
+        equilibrium()
+        fin = feq.clone()  # Initialize incoming populations (pre-collision)
+        fout = feq.clone()  # Initialize outgoing populations (post-collision)
 
     if save_to_disk:
         # Create queue for saving data to disk
         q = queue.Queue()
         # Create thread for saving data
-        t = threading.Thread(target=save_data, args=(q,))
+        t = threading.Thread(target=save_data, args=(q, ulb, obstacle))
         t.start()
 
     # Run LBM for specified number of iterations
@@ -144,7 +148,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
                 mlups = nx * ny * counter / (dt * 1e6)
                 if save_to_disk:
                     # push data to queue
-                    q.put((u, f"output/{i // interval:05}.png"))  # Five digit filename
+                    q.put(((u, rho), f"output/{i // interval:05}.png"))  # Five digit filename
                 # Reset timer and counter
                 start = time.time()
                 counter = 0
@@ -163,19 +167,6 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
         t.join()
 
 
-def save_data(q: queue.Queue):
-    # Save data to disk by running a separate thread that gets data from a queue
-    while True:
-        data, filename = q.get()
-        if data is None:
-            break
-        plt.clf()
-        plt.axis('off')
-        usqr = data[0] ** 2 + data[1] ** 2
-        usqr[obstacle] = np.nan
-        plt.imshow(np.sqrt(usqr.cpu().numpy().transpose()), cmap=cmap)
-        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
-
-
 if __name__ == '__main__':
-    run(10000, save_to_disk=True)
+    print("Using device: ", device)
+    run(50000, save_to_disk=False, interval=1000, continue_last=False)

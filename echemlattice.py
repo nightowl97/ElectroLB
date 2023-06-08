@@ -6,7 +6,6 @@ import threading
 import queue
 from alive_progress import alive_bar
 import time
-device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 # Solves the convective-diffusion equation for a species in an electrochemical system
 T = 298  # Kelvin
@@ -154,8 +153,18 @@ def step():
     stream(fin_red, fout_red)
 
 
-def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
+def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
+    global rho_ox, rho_red, fin_ox, fin_red, fout_ox, fout_red
+    if continue_last:  # Continue last computation
+        rho_ox = torch.from_numpy(np.load("output/Electrochemical_last_rho_ox.npy")).to(device)
+        rho_red = torch.from_numpy(np.load("output/Electrochemical_last_rho_red.npy")).to(device)
+        equilibrium()
+        fin_ox = feq_ox.clone()  # Initialize incoming populations (pre-collision)
+        fin_red = feq_red.clone()  # Initialize incoming populations (pre-collision)
+        fout_ox = feq_ox.clone()  # Initialize outgoing populations (post-collision)
+        fout_red = feq_red.clone()  # Initialize outgoing populations (post-collision)
+
     if save_to_disk:
         # Create queue for saving data to disk
         q = queue.Queue()
@@ -184,13 +193,14 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100):
             bar.text(f"MLUPS: {mlups:.2f}")
             bar()
 
-        # Save final data to numpy files
-        np.save(f"output/Electrochemical_last_rho.npy", rho_ox.cpu().numpy())
+    # Save final data to numpy files
+    np.save(f"output/Electrochemical_last_rho_ox.npy", rho_ox.cpu().numpy())
+    np.save(f"output/Electrochemical_last_rho_red.npy", rho_red.cpu().numpy())
 
-        if save_to_disk:
-            # Stop thread for saving data
-            q.put((None, None))
-            t.join()
+    if save_to_disk:
+        # Stop thread for saving data
+        q.put((None, None))
+        t.join()
 
 
 def save_data(q: queue.Queue):
@@ -206,4 +216,4 @@ def save_data(q: queue.Queue):
 
 
 if __name__ == '__main__':
-    run(100000, save_to_disk=True)
+    run(100000, save_to_disk=True, interval=1000, continue_last=False)

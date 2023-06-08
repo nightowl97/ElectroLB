@@ -26,10 +26,7 @@ while current_porosity > target_porosity:
     # recalculate porosity
     current_porosity = 1 - np.sum(D) / (nx * ny)
     print(current_porosity)
-    # plt.imshow(D)
-    # plt.show()
 
 plt.imshow(D, cmap=cmap)
 plt.axis('off')
 plt.savefig(f'output/disk_rho_{target_porosity}.png', bbox_inches='tight', pad_inches=0, dpi=600)
-# plt.show()

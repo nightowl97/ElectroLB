@@ -4,6 +4,11 @@ from PIL import Image
 import matplotlib.pyplot as plt
 import queue
 
+plt.rcParams.update({
+    "text.usetex": True,
+    "font.family": "Computer Modern"
+})
+
 BLACK = np.asarray([0, 0, 0])
 WHITE = np.asarray([255, 255, 255])
 RED = np.asarray([255, 0, 0])
@@ -53,3 +58,31 @@ def generate_electrode_tensor(file):
     electrode = (img_array == BLUE).all(axis=2).T
     electrode = torch.tensor(electrode, dtype=torch.bool).to(device)
     return electrode
+
+
+def save_data(q: queue.Queue, inlet_vel, obstacle):
+    # Save data to disk by running a separate thread that gets data from a queue
+    while True:
+        data, filename = q.get()
+        if data is None:
+            break
+
+        # Preprocessing before plotting
+        velocity = torch.sqrt(data[0][0] ** 2 + data[0][1] ** 2)  # module of velocity
+        velocity /= inlet_vel  # normalize
+        density = data[1]
+        velocity[obstacle] = np.nan
+        density[obstacle] = np.nan
+
+        # Plot both macroscopic variables
+        fig, (ax0, ax1) = plt.subplots(2, 1)
+        cax0 = ax0.imshow(velocity.cpu().numpy().transpose(), cmap=cmap)
+        cax1 = ax1.imshow(density.cpu().numpy().transpose(), cmap=cmap)
+        ax0.set_title(r"Normalized lattice velocity $\frac{\mathbf{||u||}}{||\mathbf{u}_{inlet}||}$")
+        ax1.set_title(r"Normalized density $\rho$")
+        ax0.axis("off")
+        ax1.axis("off")
+        fig.colorbar(cax0, ax=ax0)
+        fig.colorbar(cax1, ax=ax1)
+        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=800)
+        plt.close(fig)
