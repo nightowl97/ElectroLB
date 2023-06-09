@@ -5,11 +5,12 @@ import matplotlib
 from scipy.stats import norm
 from scipy.stats import multivariate_normal
 from scipy.signal import convolve2d
+from PIL import Image
 
 cmap = matplotlib.colormaps['Greys']
 
-nx, ny = 1000, 1000  # domain dimensions
-target_rho = 0.7
+nx, ny = 404, 4042  # domain dimensions
+target_rho = 0.5
 
 
 # Custom gaussian kernel with multivariate normal distribution and custom covariance matrix
@@ -43,7 +44,7 @@ def gaussian_kernel(size: int, mean: float, cov: np.ndarray, angle: float = 0) -
 size = 101  # Size of the kernel. Should be odd, to have a center pixel
 mean = 0   # Mean. Should be 0 for a centered kernel
 cov = np.asarray([[1, 0],
-                  [0, 10]])  # Covariance matrix
+                  [0, 1]])  # Covariance matrix
 
 # Generate the kernel
 kernel = gaussian_kernel(size, mean, .1 * cov, angle=np.pi / 9)
@@ -65,7 +66,12 @@ cutoff = norm.ppf(target_rho, loc=np.mean(smooth), scale=np.std(smooth))
 # Generate boolean matrix
 final = smooth > cutoff
 
-plt.imshow(final, cmap=cmap, interpolation='none')
-plt.axis('off')
-plt.savefig(f'output/pdrop20deg11.png', bbox_inches='tight', pad_inches=0, dpi=600)
+# plt.imshow(final.T, cmap=cmap, interpolation='none')
+# plt.axis('off')
+# plt.savefig(f'output/electrode.png', bbox_inches='tight', pad_inches=0, dpi=800)
 # plt.show()
+
+rgb_array = 255 * np.ones((nx, ny, 3))
+rgb_array[final, :] = np.asarray([0, 0, 0])
+image = Image.fromarray(rgb_array.transpose(1, 0, 2).astype(np.uint8), mode='RGB')
+image.save(f'output/electrode2.png')

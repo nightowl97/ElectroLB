@@ -12,7 +12,7 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/ecell.png')
+obstacle = generate_obstacle_tensor('input/ecell_small.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 re = 10  # Reynolds number

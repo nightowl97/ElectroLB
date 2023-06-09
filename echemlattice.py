@@ -15,8 +15,8 @@ z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
 alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
 
-electrode = generate_electrode_tensor("input/ecell.png")
-obstacle = generate_obstacle_tensor("input/ecell.png")
+electrode = generate_electrode_tensor("input/ecell_small.png")
+obstacle = generate_obstacle_tensor("input/ecell_small.png")
 v_field = torch.from_numpy(np.load('output/BaseLattice_last_u.npy'))
 v_field = v_field.clone().to(device)  # Velocity field
 
@@ -193,7 +193,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 counter = 0
 
             counter += 1
-            bar.text(f"MLUPS: {mlups:.2f}")
+            bar.text(f"MLUPS: {mlups:.2f} | Total density {rho_ox.mean().cpu().numpy():.5f}")
             bar()
 
     # Save final data to numpy files
@@ -214,9 +214,10 @@ def save_data(q: queue.Queue):
         plt.clf()
         plt.axis('off')
         data[obstacle] = np.nan
-        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap)
+        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1)
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
 
 
 if __name__ == '__main__':
-    run(100000, save_to_disk=True, interval=1000, continue_last=False)
+    print(f"omega: {omega}")
+    run(200000, save_to_disk=True, interval=10000, continue_last=False)
