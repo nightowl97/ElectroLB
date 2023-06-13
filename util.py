@@ -26,7 +26,7 @@ Outgoing directions:
 | \ | / |
 3---0---1
 | / | \ |
-7---4---8
+7---4---8 
 Lattice parameters:
 """
 c = torch.tensor([[0, 0], [1, 0], [0, 1], [-1, 0], [0, -1], [1, 1], [-1, 1], [-1, -1], [1, -1]],
@@ -68,7 +68,7 @@ def save_data(q: queue.Queue, inlet_vel, obstacle):
 
         # Preprocessing before plotting
         velocity = torch.sqrt(data[0][0] ** 2 + data[0][1] ** 2)  # module of velocity
-        velocity /= inlet_vel  # normalize
+        # velocity /= inlet_vel  # normalize
         density = data[1]
         velocity[obstacle] = np.nan
         density[obstacle] = np.nan
@@ -76,12 +76,12 @@ def save_data(q: queue.Queue, inlet_vel, obstacle):
         # Plot both macroscopic variables
         fig, (ax0, ax1) = plt.subplots(2, 1)
         cax0 = ax0.imshow(velocity.cpu().numpy().transpose(), cmap=cmap)
-        cax1 = ax1.imshow(density.cpu().numpy().transpose(), cmap=cmap)
-        ax0.set_title(r"Normalized lattice velocity $\frac{\mathbf{||u||}}{||\mathbf{u}_{inlet}||}$")
-        ax1.set_title(r"Normalized density $\rho$")
+        cax1 = ax1.imshow(density.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1.5)
+        ax0.set_title(r"lattice velocity $u$")
+        ax1.set_title(r"density $\rho$")
         ax0.axis("off")
         ax1.axis("off")
         fig.colorbar(cax0, ax=ax0)
         fig.colorbar(cax1, ax=ax1)
-        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=800)
+        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=300)
         plt.close(fig)
