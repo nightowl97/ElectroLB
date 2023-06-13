@@ -12,30 +12,19 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/cavity.png')
+obstacle = generate_obstacle_tensor('input/input2.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 10  # Reynolds number
-ulb = 0.0001  # characteristic velocity (inlet)
+re = 100  # Reynolds number
+ulb = 0.04  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
-omega = 0.99
 omega_f = omega_g = omega  # TODO: omega_f and omega_g can be different
 print(f"omega: {omega}")
 
-# Shan chen forces
-fsc_f = torch.zeros((2, nx, ny), device=device).float()
-fsc_g = torch.zeros((2, nx, ny), device=device).float()
-# Initialize macroscopic variables
-rho_f = torch.ones((nx, ny), device=device).float() + 0.1 * torch.rand((nx, ny), device=device).float()
-rho_g = torch.ones((nx, ny), device=device).float() + 0.1 * torch.rand((nx, ny), device=device).float()
-u_p = torch.zeros((2, nx, ny), device=device).float()
-u_f = torch.zeros((2, nx, ny), device=device).float()
-u_g = torch.zeros((2, nx, ny), device=device).float()
-
 
 def equilibrium():
-    global feq, geq, u_p, fsc_f, fsc_g, rho_f, rho_g
+    global feq, geq
     # Kruger et al., page 382, equation 9.125
     u_eq_f = u_p + fsc_f / (omega_f * rho_f)
     u_eq_g = u_p + fsc_g / (omega_g * rho_g)
@@ -49,6 +38,16 @@ def equilibrium():
     geq = rho_g * w.view(9, 1, 1) * (1 + cu_g + 0.5 * cu_g ** 2 - usqr_g)
 
 
+# Shan chen forces
+fsc_f = torch.zeros((2, nx, ny), device=device).float()
+fsc_g = torch.zeros((2, nx, ny), device=device).float()
+# Initialize macroscopic variables
+rho_f = torch.ones((nx, ny), device=device).float() + 0.1 * torch.rand((nx, ny), device=device).float()
+rho_g = torch.ones((nx, ny), device=device).float() + 0.1 * torch.rand((nx, ny), device=device).float()
+u_p = torch.zeros((2, nx, ny), device=device).float()
+u_f = torch.zeros((2, nx, ny), device=device).float()
+u_g = torch.zeros((2, nx, ny), device=device).float()
+
 # Initialize populations
 feq = torch.zeros((9, nx, ny), device=device).float()
 geq = torch.zeros((9, nx, ny), device=device).float()
@@ -60,50 +59,53 @@ gout = geq.clone()
 
 
 def shan_chen_force():
-    global fsc_f, fsc_g, rho_f, rho_g, nx, ny
-    G = -1  # interaction strength (negative for repulsion)
+    global fsc_f, fsc_g, rho_f, rho_g
+    G = -3  # interaction strength (negative for repulsion)
+    # Pseudopotential
+    psi_f = 1 - torch.exp(-rho_f)
+    psi_g = 1 - torch.exp(-rho_g)
     # Calculate shan-chen forces
     fsc_f[:, :, :] = 0
     fsc_g[:, :, :] = 0
     # Vel 1 pushes from right
-    fsc_f[0, :-1, :] += (w[1] * rho_g[1:, :] * (c[1, 0]))
-    fsc_g[0, :-1, :] += (w[1] * rho_f[1:, :] * (c[1, 0]))
+    fsc_f[0, :-1, :] += (w[1] * psi_g[1:, :] * (c[1, 0]))
+    fsc_g[0, :-1, :] += (w[1] * psi_f[1:, :] * (c[1, 0]))
 
     # Vel 3 pushes from left
-    fsc_f[0, 1:, :] += (w[3] * rho_g[:-1, :] * (c[3, 0]))
-    fsc_g[0, 1:, :] += (w[3] * rho_f[:-1, :] * (c[3, 0]))
+    fsc_f[0, 1:, :] += (w[3] * psi_g[:-1, :] * (c[3, 0]))
+    fsc_g[0, 1:, :] += (w[3] * psi_f[:-1, :] * (c[3, 0]))
 
     # Vel 2 pushes from top
-    fsc_f[1, :, :-1] += (w[2] * rho_g[:, 1:] * c[2, 1])
-    fsc_g[1, :, :-1] += (w[2] * rho_f[:, 1:] * c[2, 1])
+    fsc_f[1, :, :-1] += (w[2] * psi_g[:, 1:] * c[2, 1])
+    fsc_g[1, :, :-1] += (w[2] * psi_f[:, 1:] * c[2, 1])
 
     # Vel 4 pushes from bottom
-    fsc_f[1, :, 1:] += (w[4] * rho_g[:, :-1] * c[4, 1])
-    fsc_g[1, :, 1:] += (w[4] * rho_f[:, :-1] * c[4, 1])
+    fsc_f[1, :, 1:] += (w[4] * psi_g[:, :-1] * c[4, 1])
+    fsc_g[1, :, 1:] += (w[4] * psi_f[:, :-1] * c[4, 1])
 
     # Vel 5 pushes from top right
-    fsc_f[0, :-1, :-1] += (w[5] * rho_g[1:, 1:] * c[5, 0])
-    fsc_f[1, :-1, :-1] += (w[5] * rho_g[1:, 1:] * c[5, 1])
-    fsc_g[0, :-1, :-1] += (w[5] * rho_f[1:, 1:] * c[5, 0])
-    fsc_g[1, :-1, :-1] += (w[5] * rho_f[1:, 1:] * c[5, 1])
+    fsc_f[0, :-1, :-1] += (w[5] * psi_g[1:, 1:] * c[5, 0])
+    fsc_f[1, :-1, :-1] += (w[5] * psi_g[1:, 1:] * c[5, 1])
+    fsc_g[0, :-1, :-1] += (w[5] * psi_f[1:, 1:] * c[5, 0])
+    fsc_g[1, :-1, :-1] += (w[5] * psi_f[1:, 1:] * c[5, 1])
 
     # Vel 6 pushes from top left
-    fsc_f[0, 1:, :-1] += (w[6] * rho_g[:-1, 1:] * c[6, 0])
-    fsc_f[1, 1:, :-1] += (w[6] * rho_g[:-1, 1:] * c[6, 1])
-    fsc_g[0, 1:, :-1] += (w[6] * rho_f[:-1, 1:] * c[6, 0])
-    fsc_g[1, 1:, :-1] += (w[6] * rho_f[:-1, 1:] * c[6, 1])
+    fsc_f[0, 1:, :-1] += (w[6] * psi_g[:-1, 1:] * c[6, 0])
+    fsc_f[1, 1:, :-1] += (w[6] * psi_g[:-1, 1:] * c[6, 1])
+    fsc_g[0, 1:, :-1] += (w[6] * psi_f[:-1, 1:] * c[6, 0])
+    fsc_g[1, 1:, :-1] += (w[6] * psi_f[:-1, 1:] * c[6, 1])
 
     # Vel 7 pushes from bottom left
-    fsc_f[0, 1:, 1:] += (w[7] * rho_g[:-1, :-1] * c[7, 0])
-    fsc_f[1, 1:, 1:] += (w[7] * rho_g[:-1, :-1] * c[7, 1])
-    fsc_g[0, 1:, 1:] += (w[7] * rho_f[:-1, :-1] * c[7, 0])
-    fsc_g[1, 1:, 1:] += (w[7] * rho_f[:-1, :-1] * c[7, 1])
+    fsc_f[0, 1:, 1:] += (w[7] * psi_g[:-1, :-1] * c[7, 0])
+    fsc_f[1, 1:, 1:] += (w[7] * psi_g[:-1, :-1] * c[7, 1])
+    fsc_g[0, 1:, 1:] += (w[7] * psi_f[:-1, :-1] * c[7, 0])
+    fsc_g[1, 1:, 1:] += (w[7] * psi_f[:-1, :-1] * c[7, 1])
 
     # Vel 8 pushes from bottom right
-    fsc_f[0, :-1, 1:] += (w[8] * rho_g[1:, :-1] * c[8, 0])
-    fsc_f[1, :-1, 1:] += (w[8] * rho_g[1:, :-1] * c[8, 1])
-    fsc_g[0, :-1, 1:] += (w[8] * rho_f[1:, :-1] * c[8, 0])
-    fsc_g[1, :-1, 1:] += (w[8] * rho_f[1:, :-1] * c[8, 1])
+    fsc_f[0, :-1, 1:] += (w[8] * psi_g[1:, :-1] * c[8, 0])
+    fsc_f[1, :-1, 1:] += (w[8] * psi_g[1:, :-1] * c[8, 1])
+    fsc_g[0, :-1, 1:] += (w[8] * psi_f[1:, :-1] * c[8, 0])
+    fsc_g[1, :-1, 1:] += (w[8] * psi_f[1:, :-1] * c[8, 1])
 
     # periodic boundaries
     # left boundary
@@ -119,8 +121,8 @@ def shan_chen_force():
     # fsc_f[1, :, -1] += (w[4] * rho_g[:, 0] * c[4, 1]) * rho_f[:, -1]
     # fsc_g[1, :, -1] += (w[4] * rho_f[:, 0] * c[4, 1]) * rho_g[:, -1]
 
-    fsc_f *= G * rho_f
-    fsc_g *= G * rho_g
+    fsc_f *= G * psi_f
+    fsc_g *= G * psi_g
 
 
 def macroscopic():
@@ -129,10 +131,10 @@ def macroscopic():
     rho_f = fin.sum(0)  # Sum along first axis (populations in each node)
     rho_g = gin.sum(0)
     # no barycentric velocity for Guo forcing (Kruger et al., page 381-382)
-    u_f = (torch.einsum('ji,jxy->ixy', c, fin)) / rho_f
-    u_g = (torch.einsum('ji,jxy->ixy', c, gin)) / rho_g
+    u_f = (torch.einsum('ji,jxy->ixy', c, fin))
+    u_g = (torch.einsum('ji,jxy->ixy', c, gin))
     # kruger et al., page 382, equation (9.126)
-    u_p = (u_f * rho_f * omega_f + u_g * rho_g * omega_g) / (rho_f * omega_f + rho_g * omega_g)
+    u_p = (u_f * omega_f + u_g * omega_g) / (rho_f * omega_f + rho_g * omega_g)
 
 
 def stream(fin, fout):
@@ -177,37 +179,39 @@ def stream(fin, fout):
 
 
 def step():
-    global fin, fout, gin, gout, rho_f, rho_g
+    global fin, fout, gin, gout, rho_f, rho_g, u_f, u_g, u_p
     # Perform one LBM step
     # Outlet BC
-    # Doing this first is more stable for some reason
     # fin[left_col, -1, :] = fin[left_col, -2, :]
     # gin[left_col, -1, :] = gin[left_col, -2, :]
 
     macroscopic()  # Calculate macroscopic variables
     shan_chen_force()  # Calculate Shan-Chen force
     # Impose conditions on macroscopic variables
-    # u[0, 0, :] = ulb * torch.ones(ny, device=device).float()
-    # rho_f[0, :] = 1 / (1 - u[0, 0, :]) * (torch.sum(fin[center_col, 0, :], dim=0) +
-    #                                               2 * torch.sum(fin[left_col, 0, :], dim=0))
-    # rho_g[0, :] = 1 / (1 - u[0, 0, :]) * (torch.sum(gin[center_col, 0, :], dim=0) +
-    #                                               2 * torch.sum(gin[left_col, 0, :], dim=0))
+    u_p[0, 0, :] = ulb * torch.ones(ny, device=device).float()
+    # u_g[0, 0, :] = ulb * torch.ones(ny, device=device).float()
+    rho_f[0, :ny//2] = 1 / (1 - u_p[0, 0, :ny//2]) * (torch.sum(fin[center_col, 0, :ny//2], dim=0) +
+                                                  2 * torch.sum(fin[left_col, 0, :ny//2], dim=0))
+    rho_f[0, ny//2:] = 0.1
+    rho_g[0, ny//2:] = 1 / (1 - u_p[0, 0, ny//2:]) * (torch.sum(gin[center_col, 0, ny//2:], dim=0) +
+                                                  2 * torch.sum(gin[left_col, 0, ny//2:], dim=0))
+    rho_g[0, :ny//2] = 0.1
 
     # Equilibrium
     equilibrium()
 
     # Boundary conditions on populations
     # Zou-He BC Fin = Feq + Fin(op) - Feq(op)
-    # fin[right_col, 0, :] = feq[right_col, 0, :] + fin[left_col, 0, :] - feq[left_col, 0, :]
-    # gin[right_col, 0, :] = geq[right_col, 0, :] + gin[left_col, 0, :] - geq[left_col, 0, :]
+    fin[right_col, 0, :] = feq[right_col, 0, :] + fin[left_col, 0, :] - feq[left_col, 0, :]
+    gin[right_col, 0, :] = geq[right_col, 0, :] + gin[left_col, 0, :] - geq[left_col, 0, :]
 
     # BGK collision
     fout = fin - omega_f * (fin - feq)
     gout = gin - omega_g * (gin - geq)
 
     # Bounce-back
-    # fout[:, obstacle] = fin[c_op][:, obstacle]
-    # gout[:, obstacle] = gin[c_op][:, obstacle]
+    fout[:, obstacle] = fin[c_op][:, obstacle]
+    gout[:, obstacle] = gin[c_op][:, obstacle]
 
     # Streaming
     stream(fin, fout)
