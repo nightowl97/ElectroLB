@@ -37,6 +37,10 @@ right_col = [1, 5, 8]  # Right column of velocities
 left_col = [3, 7, 6]  # Left column of velocities (order is important, see line 85 equilibrium function in inlet)
 center_col = [0, 2, 4]  # Center column of velocities
 
+top_row = [2, 6, 5]
+center_row = [0, 1, 3]
+bottom_row = [4, 8, 7]
+
 
 def generate_obstacle_tensor(file):
     # Generate obstacle tensor from image file
@@ -83,5 +87,5 @@ def save_data(q: queue.Queue, inlet_vel, obstacle):
         ax1.axis("off")
         fig.colorbar(cax0, ax=ax0)
         fig.colorbar(cax1, ax=ax1)
-        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=300)
+        plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=600)
         plt.close(fig)
