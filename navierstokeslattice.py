@@ -12,11 +12,11 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/ecell_small.png')
+obstacle = generate_obstacle_tensor('input/electrode2.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 re = 10  # Reynolds number
-ulb = 0.04  # characteristic velocity (inlet)
+ulb = 0.004  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 print(f"omega: {omega}")
@@ -59,32 +59,32 @@ def stream():
     # Streaming periodically
     global nx, ny, fin, fout
     fin[1, 1:, :] = fout[1, :nx - 1, :]  # vel 1 increases x
-    fin[1, 0, :] = fout[1, -1, :]  # wrap
+    # fin[1, 0, :] = fout[1, -1, :]  # wrap
     fin[3, :nx - 1, :] = fout[3, 1:, :]  # vel 3 decreases x
-    fin[3, -1, :] = fout[3, 0, :]  # wrap
+    # fin[3, -1, :] = fout[3, 0, :]  # wrap
 
     fin[2, :, 1:] = fout[2, :, :ny - 1]  # vel 2 increases y
-    fin[2, :, 0] = fout[2, :, -1]  # wrap
+    # fin[2, :, 0] = fout[2, :, -1]  # wrap
     fin[4, :, :ny - 1] = fout[4, :, 1:]  # vel 4 decreases y
-    fin[4, :, -1] = fout[4, :, 0]  # wrap
+    # fin[4, :, -1] = fout[4, :, 0]  # wrap
 
     # vel 5 increases x and y simultaneously
     fin[5, 1:, 1:] = fout[5, :nx - 1, :ny - 1]
-    fin[5, 0, :] = fout[5, -1, :]  # wrap right
-    fin[5, :, 0] = fout[5, :, -1]  # wrap top
+    # fin[5, 0, :] = fout[5, -1, :]  # wrap right
+    # fin[5, :, 0] = fout[5, :, -1]  # wrap top
     # vel 7 decreases x and y simultaneously
     fin[7, :nx - 1, :ny - 1] = fout[7, 1:, 1:]
-    fin[7, -1, :] = fout[7, 0, :]  # wrap left
-    fin[7, :, -1] = fout[7, :, 0]  # wrap bottom
+    # fin[7, -1, :] = fout[7, 0, :]  # wrap left
+    # fin[7, :, -1] = fout[7, :, 0]  # wrap bottom
 
     # vel 6 decreases x and increases y
     fin[6, :nx - 1, 1:] = fout[6, 1:, :ny - 1]
-    fin[6, -1, :] = fout[6, 0, :]  # wrap left
-    fin[6, :, 0] = fout[6, :, -1]  # wrap top
+    # fin[6, -1, :] = fout[6, 0, :]  # wrap left
+    # fin[6, :, 0] = fout[6, :, -1]  # wrap top
     # vel 8 increases x and decreases y
     fin[8, 1:, :ny - 1] = fout[8, :nx - 1, 1:]
-    fin[8, 0, :] = fout[8, -1, :]  # wrap right
-    fin[8, :, -1] = fout[8, :, 0]  # wrap bottom
+    # fin[8, 0, :] = fout[8, -1, :]  # wrap right
+    # fin[8, :, -1] = fout[8, :, 0]  # wrap bottom
 
     fin[0, :, :] = fout[0, :, :]  # vel 0 is stationary (dont act like you didn't forget this for 2 hours)
 
@@ -169,4 +169,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(5000, save_to_disk=False, interval=100, continue_last=False)
+    run(15000, save_to_disk=True, interval=100, continue_last=False)
