@@ -7,7 +7,7 @@ from scipy.interpolate import RegularGridInterpolator
 from util import *
 
 v = np.load("output/BaseLattice_last_u.npy")
-obstacle = generate_obstacle_tensor("input/pdrop/pdrop0_2.png").cpu().numpy()
+obstacle = generate_obstacle_tensor("input/pdrop/pdroplarge_3.png").cpu().numpy()
 v[:, obstacle] = 0
 U = v[0]
 V = v[1]
@@ -19,7 +19,7 @@ U_interp = RegularGridInterpolator((x, y), U)
 V_interp = RegularGridInterpolator((x, y), V)
 
 
-def func(point, t):
+def func(point):
     return [U_interp(point)[0], V_interp(point)[0]]
 
 
@@ -30,26 +30,26 @@ fig, ax = plt.subplots()
 paths = []
 for i in range(0, v.shape[2], 5):
     # initial seed
-    y0 = [v.shape[1] - 1, i]  # Start from last element on the right (outflow) for each y
+    y0 = np.asarray([v.shape[1] - 1, i])  # Start from last element on the right (outflow) for each y
 
-    # t parameter
+    # initialize path
     path = [y0]
 
     while True:
-        t = np.array([100, 0])
-        step = integrate.odeint(func, path[-1], t)
-        path.append(step[-1])
-        if path[-1][0] < 2:
+        t = -100  # step backwards
+        # Calculate next step from previous step using euler method
+        next_step = path[-1] + np.asarray(func(path[-1])) * t
+        path.append(next_step)
+        if path[-1][0] < 20:  # TODO: Consider this when calculating reference length
             paths.append(path)
             break
-        if np.abs(path[-1][1] - 0) < 2 or np.abs(path[-1][1] - v.shape[2]) < 2:  # if reached top boundary
+        if np.abs(path[-1][1] - 0) < 10 or np.abs(path[-1][1] - v.shape[2]) < 10:  # if reached top boundary
             break
-        if norm(path[-1] - path[-2]) < 1e-4 or len(path) > 100000:  # If reached end of streamline (v = 0)
+        if norm(path[-1] - path[-2]) < 1e-6 or len(path) > 100000:  # If reached end of streamline (v = 0)
             break
         print(f"Progress: {int(i * 100 / v.shape[2])}%, \tCurrent x: {path[-1][0]}\tCurrent y: {path[-1][1]}", sep='', end="\r", flush=True)
 
 # Calculate lengths of streamlines
-# TODO: This is not working properly, try summing distances between points instead
 print("Calculating lengths...")
 lengths = []
 for path in paths:

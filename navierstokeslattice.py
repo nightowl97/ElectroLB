@@ -12,10 +12,10 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/electrode2.png')
+obstacle = generate_obstacle_tensor('input/pdrop/pdroplarge_3.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 10  # Reynolds number
+re = 20  # Reynolds number
 ulb = 0.004  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
@@ -169,4 +169,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(15000, save_to_disk=True, interval=100, continue_last=False)
+    run(25000, save_to_disk=True, interval=1000, continue_last=False)
