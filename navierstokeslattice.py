@@ -12,11 +12,11 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/pdrop/pdroplarge_3.png')
+obstacle = generate_obstacle_tensor('input/pdrop/pdrop3_20deg10.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 20  # Reynolds number
-ulb = 0.004  # characteristic velocity (inlet)
+re = 10  # Reynolds number
+ulb = 0.001  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 print(f"omega: {omega}")
@@ -33,6 +33,8 @@ def equilibrium():
 # Initialize macroscopic variables
 rho = torch.ones((nx, ny), device=device).float()
 u = torch.zeros((2, nx, ny), device=device).float()
+last_u = torch.zeros((2, nx, ny), device=device).float()
+du = []
 
 # Initialize populations
 feq = torch.zeros((9, nx, ny), device=device).float()
@@ -90,13 +92,15 @@ def stream():
 
 
 def step():
-    global fin, fout, rho, u
+    global fin, fout, rho, u, last_u, du
     # Perform one LBM step
     # Outlet BC
     # Doing this first is more stable for some reason
     fin[left_col, -1, :] = fin[left_col, -2, :]
-
     macroscopic()  # Calculate macroscopic variables
+    # Calculate velocity difference
+    du.append(torch.norm(u - last_u).cpu().item())
+    last_u = u.clone()
     # Impose conditions on macroscopic variables
     u[0, 0, :] = ulb * torch.ones(ny, device=device).float()
     rho[0, :] = 1 / (1 - u[0, 0, :]) * (torch.sum(fin[center_col, 0, :], dim=0) +
@@ -154,12 +158,15 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 counter = 0
 
             counter += 1
-            bar.text(f"MLUPS: {mlups:.2f}")
+            bar.text(f"MLUPS: {mlups:.2f}, du: {du[-1]:.5e}")
             bar()
 
     # Save final data to numpy files
     np.save(f"output/BaseLattice_last_u.npy", u.cpu().numpy())
     np.save(f"output/BaseLattice_last_rho.npy", rho.cpu().numpy())
+    fig, ax = plt.subplots()
+    ax.semilogy(np.asarray(du[2:]))
+    plt.show()
 
     if save_to_disk:
         # Stop thread for saving data
@@ -169,4 +176,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(25000, save_to_disk=True, interval=1000, continue_last=False)
+    run(10000, save_to_disk=True, interval=1000, continue_last=False)

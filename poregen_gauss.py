@@ -9,8 +9,8 @@ from PIL import Image
 
 cmap = matplotlib.colormaps['Greys']
 
-nx, ny = 404, 4042  # domain dimensions
-target_rho = 0.5
+nx, ny = 300, 300  # domain dimensions
+target_rho = 0.7
 
 
 # Custom gaussian kernel with multivariate normal distribution and custom covariance matrix
@@ -47,7 +47,7 @@ cov = np.asarray([[1, 0],
                   [0, 1]])  # Covariance matrix
 
 # Generate the kernel
-kernel = gaussian_kernel(size, mean, .1 * cov, angle=np.pi / 9)
+kernel = gaussian_kernel(size, mean, .01 * cov, angle=np.pi / 9)
 
 plt.imshow(kernel, interpolation='none')
 plt.axis('off')
@@ -65,6 +65,7 @@ cutoff = norm.ppf(target_rho, loc=np.mean(smooth), scale=np.std(smooth))
 
 # Generate boolean matrix
 final = smooth > cutoff
+print(f'Porosity: {1 - np.sum(final) / (nx * ny)}')
 
 # plt.imshow(final.T, cmap=cmap, interpolation='none')
 # plt.axis('off')
@@ -74,4 +75,4 @@ final = smooth > cutoff
 rgb_array = 255 * np.ones((nx, ny, 3))
 rgb_array[final, :] = np.asarray([0, 0, 0])
 image = Image.fromarray(rgb_array.transpose(1, 0, 2).astype(np.uint8), mode='RGB')
-image.save(f'output/electrode2.png')
+image.save(f'output/pdrop_001sig.png')

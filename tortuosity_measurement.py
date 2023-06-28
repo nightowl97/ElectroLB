@@ -1,20 +1,19 @@
 import matplotlib.pyplot as plt
 import numpy as np
 from scipy.linalg import norm
-from numpy import gradient, sqrt
-from scipy import integrate
 from scipy.interpolate import RegularGridInterpolator
 from util import *
 
 v = np.load("output/BaseLattice_last_u.npy")
-obstacle = generate_obstacle_tensor("input/pdrop/pdroplarge_3.png").cpu().numpy()
+obstacle = generate_obstacle_tensor("input/pdrop/pdrop3_20deg10.png").cpu().numpy()
+left_margin = 10
 v[:, obstacle] = 0
 U = v[0]
 V = v[1]
 x = np.arange(v.shape[1])
 y = np.arange(v.shape[2])
 
-# Interpolation of vector field
+# Interpolation of vector field 244 74
 U_interp = RegularGridInterpolator((x, y), U)
 V_interp = RegularGridInterpolator((x, y), V)
 
@@ -38,14 +37,21 @@ for i in range(0, v.shape[2], 5):
     while True:
         t = -100  # step backwards
         # Calculate next step from previous step using euler method
-        next_step = path[-1] + np.asarray(func(path[-1])) * t
+        try:
+            next_step = path[-1] + np.asarray(func(path[-1])) * t
+        except ValueError:
+            print("ValueError")
+            break
         path.append(next_step)
-        if path[-1][0] < 20:  # TODO: Consider this when calculating reference length
+        if path[-1][0] < left_margin:  # if reached left boundary
             paths.append(path)
+            # print("reached end")
             break
-        if np.abs(path[-1][1] - 0) < 10 or np.abs(path[-1][1] - v.shape[2]) < 10:  # if reached top boundary
+        if np.abs(path[-1][1] - 0) < 1 or np.abs(path[-1][1] - v.shape[2]) < 1:  # if reached top boundary
+            print("reached top/bot boundary")
             break
-        if norm(path[-1] - path[-2]) < 1e-6 or len(path) > 100000:  # If reached end of streamline (v = 0)
+        if norm(path[-1] - path[-2]) < 1e-16 or len(path) > 100000:  # If reached end of streamline (v = 0)
+            print("reached velocity ~zero")
             break
         print(f"Progress: {int(i * 100 / v.shape[2])}%, \tCurrent x: {path[-1][0]}\tCurrent y: {path[-1][1]}", sep='', end="\r", flush=True)
 
@@ -64,9 +70,9 @@ for path in paths:
     ax.plot(np.asarray(path)[:, 0], np.asarray(path)[:, 1], 'r--', linewidth=0.2)
 
 plt.imshow(np.invert(obstacle.T), cmap='gray')
-plt.savefig("output/Streamlines.png", dpi=1200)
+plt.savefig("output/Streamlines_pdrop3_20deg10.png", dpi=1200)
 
 lengths = np.asarray(lengths)
-tortuosity = np.mean(lengths) / v.shape[1]
+tortuosity = np.mean(lengths) / (v.shape[1] - left_margin - 1)  # -1 for right margin
 
 print(f"Measured Tortuosity: {tortuosity}")
