@@ -5,7 +5,7 @@ from scipy.interpolate import RegularGridInterpolator
 from util import *
 
 v = np.load("output/BaseLattice_last_u.npy")
-obstacle = generate_obstacle_tensor("input/pdrop/pdrop3_20deg10.png").cpu().numpy()
+obstacle = generate_obstacle_tensor("input/tortuosity/pdrop_10sig.png").cpu().numpy()
 left_margin = 10
 v[:, obstacle] = 0
 U = v[0]
@@ -29,7 +29,7 @@ fig, ax = plt.subplots()
 paths = []
 for i in range(0, v.shape[2], 5):
     # initial seed
-    y0 = np.asarray([v.shape[1] - 1, i])  # Start from last element on the right (outflow) for each y
+    y0 = np.asarray([v.shape[1] - 10, i])  # Start from last element on the right (outflow) for each y
 
     # initialize path
     path = [y0]
@@ -50,8 +50,11 @@ for i in range(0, v.shape[2], 5):
         if np.abs(path[-1][1] - 0) < 1 or np.abs(path[-1][1] - v.shape[2]) < 1:  # if reached top boundary
             print("reached top/bot boundary")
             break
-        if norm(path[-1] - path[-2]) < 1e-16 or len(path) > 100000:  # If reached end of streamline (v = 0)
+        if norm(path[-1] - path[-2]) < 1e-16:  # If reached end of streamline (v = 0)
             print("reached velocity ~zero")
+            break
+        if len(path) > 100000:
+            print("reached max length")
             break
         print(f"Progress: {int(i * 100 / v.shape[2])}%, \tCurrent x: {path[-1][0]}\tCurrent y: {path[-1][1]}", sep='', end="\r", flush=True)
 
@@ -70,7 +73,7 @@ for path in paths:
     ax.plot(np.asarray(path)[:, 0], np.asarray(path)[:, 1], 'r--', linewidth=0.2)
 
 plt.imshow(np.invert(obstacle.T), cmap='gray')
-plt.savefig("output/Streamlines_pdrop3_20deg10.png", dpi=1200)
+plt.savefig("output/Streamlines_pdrop_10sig.png", dpi=1200)
 
 lengths = np.asarray(lengths)
 tortuosity = np.mean(lengths) / (v.shape[1] - left_margin - 1)  # -1 for right margin

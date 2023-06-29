@@ -11,11 +11,11 @@ from util import *
 # ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 -pix_fmt yuv420p output.mp4
 
 """Simulation parameters"""
-# Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/pdrop/pdrop3_20deg10.png')
+# Create obstacle tensor from numpy array`
+obstacle = generate_obstacle_tensor('input/tortuosity/pdrop_10sig.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 10  # Reynolds number
+re = 1  # Reynolds number
 ulb = 0.001  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
@@ -176,4 +176,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(10000, save_to_disk=True, interval=1000, continue_last=False)
+    run(10000, save_to_disk=True, interval=100, continue_last=False)

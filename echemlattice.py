@@ -14,16 +14,19 @@ F = 96485  # C/mol
 z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
 alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
+j0 = 1e-1  # Exchange current density
 
 electrode = generate_electrode_tensor("input/ecell_small.png")
 obstacle = generate_obstacle_tensor("input/ecell_small.png")
 v_field = torch.from_numpy(np.load('output/BaseLattice_last_u.npy'))
 v_field = v_field.clone().to(device)  # Velocity field
 
+v_field[:, :, :] = 0  # temporary
+
 
 """Simulation parameters"""
 # Diffusion coefficient
-d = 1
+d = .2
 tau = 3 * d + 0.5  # Relaxation time
 omega = 1 / tau  # TODO: add independent omega for each species
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
@@ -32,8 +35,8 @@ nx, ny = obstacle.shape  # Number of nodes in x and y directions
 # Initialize scalar field for species concentration
 rho_ox = torch.ones((nx, ny), device=device)
 rho_red = torch.ones((nx, ny), device=device)
-rho_ox[0, :] = 1  # Inlet concentration
-rho_red[0, :] = 1  # Inlet concentration
+rho_ox[:, 1] = 1  # Inlet concentration
+rho_red[:, 1] = 1  # Inlet concentration
 
 feq_ox = torch.zeros((9, nx, ny), device=device)
 feq_red = torch.zeros((9, nx, ny), device=device)
@@ -59,11 +62,12 @@ source_ox = torch.zeros_like(rho_ox, device=device)
 source_red = torch.zeros_like(rho_red, device=device)
 
 # Set electrode potential
-e = E_0 + 2
+e = E_0 * torch.ones(10000, device=device)
 # Nernst potential on electrode verify if needed R * T / (z * F)
 e_nernst = torch.ones_like(electrode, device=device) * E_0
 # Current density
 j = torch.zeros_like(e_nernst, device=device)
+j_log = torch.empty(10000, device=device)
 
 """LBM operations"""
 
@@ -115,8 +119,8 @@ def stream(fin, fout):
     fin[0, :, :] = fout[0, :, :]  # vel 0 is stationary (dont act like you didn't forget this for 2 hours)
 
 
-def step():
-    global fin_ox, fin_red, fout_ox, fout_red, source_ox, source_red, rho_ox, rho_red, e_nernst, j
+def step(i):
+    global fin_ox, fin_red, fout_ox, fout_red, source_ox, source_red, rho_ox, rho_red, e_nernst, j, e
     # Perform one LBM step
     # Outlet BC
     # Equiv. to neumann BC on concentration (null flux)
@@ -126,8 +130,8 @@ def step():
     macroscopic()
 
     # Inlet BC
-    rho_ox[0, :] = 1  # Inlet concentration
-    rho_red[0, :] = 1  # Inlet concentration
+    rho_ox[:, ny - 2] = 1  # Inlet concentration
+    rho_red[:, ny - 2] = 1  # Inlet concentration
 
     equilibrium()
 
@@ -137,11 +141,12 @@ def step():
 
     # Electrode BC
     e_nernst = E_0 + torch.log(rho_ox[electrode] / rho_red[electrode])
-    j = 1e-3 * (rho_ox[electrode] * torch.exp(0.5 * (e - e_nernst)) -
-                rho_red[electrode] * torch.exp(-0.5 * (e - e_nernst)))
+    j = j0 * (rho_ox[electrode] * torch.exp(0.5 * (e[i] - e_nernst)) -
+                rho_red[electrode] * torch.exp(-0.5 * (e[i] - e_nernst)))
 
     source_ox[electrode] = -j
     source_red[electrode] = j
+    j_log[i] = torch.sum(j)  # Log current density
 
     # BGK collision
     fout_ox = fin_ox - omega * (fin_ox - feq_ox) + torch.einsum('i,jk->ijk', w, source_ox)
@@ -158,7 +163,10 @@ def step():
 
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
-    global rho_ox, rho_red, fin_ox, fin_red, fout_ox, fout_red
+    global rho_ox, rho_red, fin_ox, fin_red, fout_ox, fout_red, j_log, e
+    j_log = torch.zeros(iterations, device=device)
+    e = torch.zeros(iterations, device=device)
+    e += (2 * E_0 / iterations) * torch.arange(iterations, device=device)
     if continue_last:  # Continue last computation
         rho_ox = torch.from_numpy(np.load("output/Electrochemical_last_rho_ox.npy")).to(device)
         rho_red = torch.from_numpy(np.load("output/Electrochemical_last_rho_red.npy")).to(device)
@@ -180,7 +188,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         start = time.time()
         counter = 0
         for i in range(iterations):
-            step()  # Perform one LBM step
+            step(i)  # Perform one LBM step
             if i % interval == 0:
                 # Calculate MLUPS by dividing number of nodes by time in seconds
                 dt = time.time() - start
@@ -200,6 +208,12 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     np.save(f"output/Electrochemical_last_rho_ox.npy", rho_ox.cpu().numpy())
     np.save(f"output/Electrochemical_last_rho_red.npy", rho_red.cpu().numpy())
 
+    # Plot current density
+    fig, ax = plt.subplots()
+    ax.plot(e, j_log.cpu().numpy())
+    plt.show()
+    plt.close(fig)
+
     if save_to_disk:
         # Stop thread for saving data
         q.put((None, None))
@@ -215,9 +229,10 @@ def save_data(q: queue.Queue):
         plt.axis('off')
         data[obstacle] = np.nan
         plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1)
+        plt.colorbar()
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
 
 
 if __name__ == '__main__':
     print(f"omega: {omega}")
-    run(200000, save_to_disk=True, interval=10000, continue_last=False)
+    run(10000, save_to_disk=True, interval=100, continue_last=False)
