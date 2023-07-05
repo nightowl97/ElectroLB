@@ -12,7 +12,7 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array`
-obstacle = generate_obstacle_tensor('input/tortuosity/pdrop_10sig.png')
+obstacle = generate_obstacle_tensor('input/ecell.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 re = 1  # Reynolds number
@@ -176,4 +176,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(10000, save_to_disk=True, interval=100, continue_last=False)
+    run(1000, save_to_disk=True, interval=100, continue_last=False)
