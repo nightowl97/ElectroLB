@@ -15,7 +15,7 @@ F = 96485  # C/mol
 z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
 alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
-j0 = 1e-1  # Exchange current density
+j0 = 1e-3  # Exchange current density
 
 electrode = generate_electrode_tensor("input/ecell.png")
 obstacle = generate_obstacle_tensor("input/ecell.png")
@@ -27,7 +27,7 @@ v_field[:, :, :] = 0  # temporary
 
 """Simulation parameters"""
 # Diffusion coefficient
-d = .1
+d = 1e-1
 tau = 3 * d + 0.5  # Relaxation time
 omega = 1 / tau  # TODO: add independent omega for each species
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
@@ -74,9 +74,9 @@ j_log = torch.empty(10000, dtype=torch.float64, device=device)
 
 
 def macroscopic():
-    global rho_ox, rho_red
-    rho_ox = fin_ox.sum(0)
-    rho_red = fin_red.sum(0)
+    global rho_ox, rho_red, source_ox, source_red
+    rho_ox = torch.clamp(fin_ox.sum(0) + source_ox / 2, 1e-10, 10)
+    rho_red = torch.clamp(fin_red.sum(0) + source_red / 2, 1e-10, 10)
 
 
 def stream(fin, fout):
@@ -141,18 +141,18 @@ def step(i):
     fin_red[right_col, 0, :] = feq_red[right_col, 0, :] + fin_red[left_col, 0, :] - feq_red[left_col, 0, :]
 
     # Electrode BC
-    # TODO: include F/RT factor in the exponentials and nernst potential for correct units
-    e_nernst = E_0 + torch.log(rho_ox[electrode] / rho_red[electrode])
-    j = j0 * (rho_ox[electrode] * torch.exp(0.5 * (e[i] - e_nernst)) -
-              rho_red[electrode] * torch.exp(-0.5 * (e[i] - e_nernst)))
+    e_nernst = E_0 + (R * T) / (z * F) * torch.log(rho_red[electrode] / rho_ox[electrode])
+    # avoid large exponents in diffusion limited regime
+    exponent = torch.clamp(0.5 * (F / (R*T)) * (e[i] - e_nernst), -30, 30)
+    j = j0 * (rho_ox[electrode] * torch.exp(exponent) - rho_red[electrode] * torch.exp(-exponent))
 
     source_ox[electrode] = -j
     source_red[electrode] = j
     j_log[i] = torch.sum(j)  # Log current density
 
     # BGK collision
-    fout_ox = fin_ox - omega * (fin_ox - feq_ox) + torch.einsum('i,jk->ijk', w, source_ox)
-    fout_red = fin_red - omega * (fin_red - feq_red) + torch.einsum('i,jk->ijk', w, source_red)
+    fout_ox = fin_ox - omega * (fin_ox - feq_ox) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_ox)
+    fout_red = fin_red - omega * (fin_red - feq_red) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_red)
 
     # Bounce-back
     fout_ox[:, obstacle] = fin_ox[c_op][:, obstacle]
@@ -173,11 +173,12 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     phase_shift = 0.0397885 * np.pi  # 4 pi freq
     # phase_shift = 0.099472 * np.pi  # 8 pi freq
     signal = torch.from_numpy(sawtooth(4 * np.pi * (t + phase_shift), 0.5)).to(device)
-    max_e = 1.6
+    max_e = 1.2
     e = signal * (max_e / 2) * torch.ones(iterations, device=device) + 0.6
     plt.plot(e.cpu().numpy())
     plt.ylabel("Potential (V)")
     plt.xlabel("Iteration")
+    plt.grid()
     plt.show()
     print(e[0])
     if continue_last:  # Continue last computation
@@ -248,4 +249,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == '__main__':
     print(f"omega: {omega}")
-    run(15000, save_to_disk=True, interval=100, continue_last=False)
+    run(6000, save_to_disk=True, interval=100, continue_last=False)
