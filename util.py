@@ -14,11 +14,19 @@ WHITE = np.asarray([255, 255, 255])
 RED = np.asarray([255, 0, 0])
 GREEN = np.asarray([0, 255, 0])
 BLUE = np.asarray([0, 0, 255])
+YELLOW = np.asarray([255, 255, 0])
+CYAN = np.asarray([0, 255, 255])
+MAGENTA = np.asarray([255, 0, 255])
 
 device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
 
 cmap = plt.get_cmap('coolwarm')
 cmap.set_bad((0, 0, 0, 1))
+
+# Physical constants
+T = 298  # Kelvin
+R = 8.3145  # J/mol.K
+F = 96485  # C/mol
 
 """
 Outgoing directions:
@@ -53,12 +61,12 @@ def generate_obstacle_tensor(file):
     return obstacle
 
 
-def generate_electrode_tensor(file):
+def generate_electrode_tensor(file, color=BLUE):
     # Generate electrode tensor from image file
     img_array = np.asarray(Image.open(file))
     # Black pixels are True, white pixels are False
 
-    electrode = (img_array == BLUE).all(axis=2).T
+    electrode = (img_array == color).all(axis=2).T
     electrode = torch.tensor(electrode, dtype=torch.bool).to(device)
     return electrode
 

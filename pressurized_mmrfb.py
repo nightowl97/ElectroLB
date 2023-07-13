@@ -10,14 +10,13 @@ from scipy import linalg
 """
 Solves the NS equations for pressure inlet of microfluidic redox flow battery
 """
-# TODO: interface needs to be color coded blue
 
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/mmrfb_original.png')
+obstacle = generate_obstacle_tensor('input/mmrfbs/MMRFB_v0.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 100  # Reynolds number
-ulb = 0.02  # characteristic velocity
+re = 1  # Reynolds number
+ulb = 0.00002  # characteristic velocity
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 print(f"omega: {omega}")
@@ -179,6 +178,9 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     # Save final data to numpy files
     np.save(f"output/BaseLattice_last_u.npy", u.cpu().numpy())
     np.save(f"output/BaseLattice_last_rho.npy", rho.cpu().numpy())
+    fig, ax = plt.subplots()
+    ax.semilogy(np.asarray(delta_u_list[2:]))
+    plt.show()
 
     if save_to_disk:
         # Stop thread for saving data
@@ -188,4 +190,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(200000, save_to_disk=True, interval=1000, continue_last=False)
+    run(1000, save_to_disk=True, interval=10, continue_last=True)

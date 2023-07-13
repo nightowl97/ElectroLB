@@ -9,9 +9,6 @@ import time
 from scipy.signal import sawtooth
 
 # Solves the convective-diffusion equation for a species in an electrochemical system
-T = 298  # Kelvin
-R = 8.3145  # J/mol.K
-F = 96485  # C/mol
 z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
 alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
@@ -141,6 +138,7 @@ def step(i):
     fin_red[right_col, 0, :] = feq_red[right_col, 0, :] + fin_red[left_col, 0, :] - feq_red[left_col, 0, :]
 
     # Electrode BC
+    # TODO: Use Tafel in logarithmic space to avoid instabilities
     e_nernst = E_0 + (R * T) / (z * F) * torch.log(rho_red[electrode] / rho_ox[electrode])
     # avoid large exponents in diffusion limited regime
     exponent = torch.clamp(0.5 * (F / (R*T)) * (e[i] - e_nernst), -30, 30)
@@ -197,7 +195,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         t = threading.Thread(target=save_data, args=(q,))
         t.start()
 
-        # Run LBM for specified number of iterations
+    # Run LBM for specified number of iterations
     with alive_bar(iterations) as bar:
         start = time.time()
         counter = 0

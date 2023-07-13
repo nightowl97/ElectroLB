@@ -6,10 +6,12 @@ from scipy.stats import norm
 from scipy.stats import multivariate_normal
 from scipy.signal import convolve2d
 from PIL import Image
+from util import *
 
 cmap = matplotlib.colormaps['Greys']
+display_interface = False  # Colors Electrodes sfc in blue for identification in LBM obstacle
 
-nx, ny = 300, 300  # domain dimensions
+nx, ny = 4042, 400  # domain dimensions
 target_rho = 0.7
 
 
@@ -47,7 +49,7 @@ cov = np.asarray([[1, 0],
                   [0, 1]])  # Covariance matrix
 
 # Generate the kernel
-kernel = gaussian_kernel(size, mean, .01 * cov, angle=np.pi / 9)
+kernel = gaussian_kernel(size, mean, 1 * cov, angle=np.pi / 9)
 
 plt.imshow(kernel, interpolation='none')
 plt.axis('off')
@@ -57,6 +59,7 @@ plt.show()
 # Generate random noise matrix from normal distribution
 noise = np.random.randn(nx, ny)
 
+print("Applying Gaussian Smoothing..")
 # Smooth it with gaussian kernel
 smooth = convolve2d(noise, kernel, mode='same', boundary='symm')
 
@@ -72,7 +75,25 @@ print(f'Porosity: {1 - np.sum(final) / (nx * ny)}')
 # plt.savefig(f'output/electrode.png', bbox_inches='tight', pad_inches=0, dpi=800)
 # plt.show()
 
+interface = np.full_like(final, False)
+# identify interface
+print("Finding interface..")
+for i in range(1, nx - 1):
+    for j in range(1, ny - 1):
+        neighborhood = final[i - 1: i + 1, j - 1: j + 1]
+        if not (neighborhood.all() or not neighborhood.any()):
+            interface[i, j] = True
+
+# Obstacles on Boundaries are considered electrode surface
+# interface[0, final[0]] = True
+# interface[-1, final[-1]] = True
+interface[final[:, 0], 0] = True
+interface[final[:, -1], -1] = True
+
+print("Drawing Image..")
 rgb_array = 255 * np.ones((nx, ny, 3))
-rgb_array[final, :] = np.asarray([0, 0, 0])
+rgb_array[final, :] = np.asarray(BLACK)
+rgb_array[interface, :] = np.asarray(BLUE)
 image = Image.fromarray(rgb_array.transpose(1, 0, 2).astype(np.uint8), mode='RGB')
-image.save(f'output/pdrop_001sig.png')
+image.save(f'output/electrode_0.7.png')
+print("Done.")

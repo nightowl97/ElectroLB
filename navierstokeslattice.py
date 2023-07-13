@@ -12,11 +12,11 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array`
-obstacle = generate_obstacle_tensor('input/ecell.png')
+obstacle = generate_obstacle_tensor('input/mmrfbs/planar.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 re = 1  # Reynolds number
-ulb = 0.001  # characteristic velocity (inlet)
+ulb = 0.0005  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 print(f"omega: {omega}")
@@ -176,4 +176,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(1000, save_to_disk=True, interval=100, continue_last=False)
+    run(60000, save_to_disk=True, interval=100, continue_last=False)
