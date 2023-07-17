@@ -8,6 +8,13 @@ from alive_progress import alive_bar
 import time
 import numpy as np
 
+# Physical dimensions
+length_ph = 5e-2  # 5mm or 0.005m
+height_ph = 5e-3  # 2mm or 0.02m
+diff_ph = 0.76e-8  # m^2/s (From Allen, Bard appendix for Ferrocyanide, page 831)
+vel_ph = 0.01  # m/s
+Pe = vel_ph * height_ph / diff_ph  # Peclet number
+
 # External circuit load
 resistor = torch.ones(10, device=device)  # ohm
 voltage_drop = 0  # volts
@@ -34,21 +41,21 @@ inlet_top = generate_electrode_tensor(input_image, YELLOW)
 
 
 # Diffusion constant
-d = 1e-1
+d = obstacle.shape[0] * 0.3 / Pe  # Lowering omega requires increasing the resolution
 tau = 3 * d + .5
 omega = 1 / tau
 nx, ny = obstacle.shape
 
 # Initialize
-rho_ox_1 = torch.ones((nx, ny), dtype=torch.float64, device=device)
-rho_red_1 = torch.ones((nx, ny), dtype=torch.float64, device=device)
-rho_ox_2 = torch.ones((nx, ny), dtype=torch.float64, device=device)
-rho_red_2 = torch.ones((nx, ny), dtype=torch.float64, device=device)
+rho_ox_1 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
+rho_red_1 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
+rho_ox_2 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
+rho_red_2 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
 
-feq_ox_1 = torch.ones((9, nx, ny), device=device)
-feq_red_1 = torch.ones((9, nx, ny), device=device)
-feq_ox_2 = torch.ones((9, nx, ny), device=device)
-feq_red_2 = torch.ones((9, nx, ny), device=device)
+feq_ox_1 = torch.zeros((9, nx, ny), device=device)
+feq_red_1 = torch.zeros((9, nx, ny), device=device)
+feq_ox_2 = torch.zeros((9, nx, ny), device=device)
+feq_red_2 = torch.zeros((9, nx, ny), device=device)
 
 
 def equilibrium():
@@ -77,6 +84,12 @@ source_red_1 = torch.zeros_like(rho_red_1, device=device)
 source_ox_2 = torch.zeros_like(rho_ox_2, device=device)
 source_red_2 = torch.zeros_like(rho_red_2, device=device)
 
+# population source terms
+source_ox_1_i = torch.einsum('i,jk->ijk', w, source_ox_1)
+source_red_1_i = torch.einsum('i,jk->ijk', w, source_red_1)
+source_ox_2_i = torch.einsum('i,jk->ijk', w, source_ox_2)
+source_red_2_i = torch.einsum('i,jk->ijk', w, source_red_2)
+
 # Set up Nernst potential over interface
 e_nernst_1 = E_01 - (R * T / F) * torch.log(rho_red_1[electrode1] / rho_ox_1[electrode1])
 e_nernst_2 = E_02 - (R * T / F) * torch.log(rho_red_2[electrode2] / rho_ox_2[electrode2])
@@ -84,10 +97,11 @@ e_nernst_2 = E_02 - (R * T / F) * torch.log(rho_red_2[electrode2] / rho_ox_2[ele
 
 def macroscopic():
     global rho_ox_1, rho_red_1, rho_ox_2, rho_red_2
-    rho_ox_1 = torch.clamp(fin_ox_1.sum(0) + source_ox_1 / 2, 1e-10, 10)
-    rho_red_1 = torch.clamp(fin_red_1.sum(0) + source_red_1 / 2, 1e-10, 10)
-    rho_ox_2 = torch.clamp(fin_ox_2.sum(0) + source_ox_2 / 2, 1e-10, 10)
-    rho_red_2 = torch.clamp(fin_red_2.sum(0) + source_red_2 / 2, 1e-10, 10)
+    # With source term correction as shown in Kruger 310
+    rho_ox_1 = torch.clamp(torch.sum(fin_ox_1 + source_ox_1_i / 2, 0), 0, 10)
+    rho_red_1 = torch.clamp(torch.sum(fin_red_1 + source_red_1_i / 2, 0), 0, 10)
+    rho_ox_2 = torch.clamp(torch.sum(fin_ox_2 + source_ox_2_i / 2, 0), 0, 10)
+    rho_red_2 = torch.clamp(torch.sum(fin_red_2 + source_red_2_i / 2, 0), 0, 10)
 
 
 def stream(fin, fout):
@@ -124,8 +138,8 @@ def stream(fin, fout):
 
 
 def step(i):
-    global fin_ox_1, fin_ox_2, fin_red_1, fin_red_2, e_nernst_1, voltage_drop
-    global fout_ox_1, fout_ox_2, fout_red_1, fout_red_2, e_nernst_2, j
+    global fin_ox_1, fin_ox_2, fin_red_1, fin_red_2, e_nernst_1, voltage_drop, source_ox_1_i, source_red_1_i
+    global fout_ox_1, fout_ox_2, fout_red_1, fout_red_2, e_nernst_2, j, source_ox_2_i, source_red_2_i
 
     fin_ox_1[left_col, -1, :] = fin_ox_1[left_col, -2, :]
     fin_red_1[left_col, -1, :] = fin_red_1[left_col, -2, :]
@@ -136,8 +150,12 @@ def step(i):
     # Inlet concentrations
     rho_ox_1[inlet_bottom] = 1
     rho_red_1[inlet_bottom] = 1
+    rho_ox_1[inlet_top] = 0
+    rho_red_1[inlet_top] = 0
     rho_ox_2[inlet_top] = 1
     rho_red_2[inlet_top] = 1
+    rho_ox_2[inlet_bottom] = 0
+    rho_red_2[inlet_bottom] = 0
 
     equilibrium()
 
@@ -148,29 +166,58 @@ def step(i):
     fin_red_2[right_col, 0, :] = feq_red_2[right_col, 0, :] + fin_red_2[left_col, 0, :] - feq_red_2[left_col, 0, :]
 
     # Average potential difference between two electrodes
-    e_nernst_1 = E_01 - (R * T / F) * torch.log(rho_red_1[electrode1] / rho_ox_1[electrode1])
-    e_nernst_2 = E_02 - (R * T / F) * torch.log(rho_red_2[electrode2] / rho_ox_2[electrode2])
+    # e_nernst_1 = E_01 - (R * T / F) * torch.log(rho_red_1[electrode1] / rho_ox_1[electrode1])
+    # e_nernst_2 = E_02 - (R * T / F) * torch.log(rho_red_2[electrode2] / rho_ox_2[electrode2])
+
     # Resulting average current
-    voltage_drop = torch.mean(e_nernst_1) - torch.mean(e_nernst_2)
-    j_ohm = voltage_drop / resistor[i]
-    # If we're trying to draw more current than diffusion allows, just draw the maximum
-    if torch.any(j_ohm / electrode1_size > source_red_1[electrode1]):
-        j = rho_red_1[electrode1]
-    elif torch.any(j_ohm / electrode2_size > source_ox_1[electrode1]):
-        j = electrode2_size * torch.min(source_ox_2[electrode2])
-    # TODO: limit j using concentrations for low values of R
-    # Source Terms
-    source_ox_1[electrode1] = j / electrode1_size
-    source_red_1[electrode1] = -j / electrode1_size
+    # voltage_drop = torch.mean(e_nernst_1) - torch.mean(e_nernst_2)
+    # J_ohm = voltage_drop / resistor[i]
+    # q_diff_1 = rho_red_1[electrode1].sum(0)
+    # q_diff_2 = rho_ox_2[electrode2].sum(0)
+    # q_diff = torch.min(q_diff_1, q_diff_2)
+    # # If resistance limited
+    # if J_ohm < q_diff:
+    #     q_1 = J_ohm / (2 * electrode1_size)
+    #     q_2 = J_ohm / (2 * electrode2_size)
+    #
+    #     j = J_ohm
+    #
+    #     # Source Terms
+    #     source_ox_1[electrode1] = q_1
+    #     source_red_1[electrode1] = -q_1
+    #
+    #     source_ox_2[electrode2] = -q_2
+    #     source_red_2[electrode2] = q_2
+    # else:  # If diffusion limited
+    #     # locate depletion regions in electrodes
+    #     mask_1 = q_diff / electrode1_size > rho_red_1[electrode1] / F  # Where we try to draw more than available
+    #     mask_2 = q_diff / electrode2_size > rho_ox_2[electrode2] / F  # Where we try to draw more than available
+    #
+    #     source_ox_1[electrode1][mask_1] = rho_red_1[electrode1][mask_1]
+    #     source_red_1[electrode1][mask_1] = -rho_red_1[electrode1][mask_1]
+    #     j_initial = torch.sum(rho_red_1[electrode1][mask_1])
+    #     rem_j = q_diff - j_initial  # remaining current to be drawn from the other sites
+    #     source_ox_1[electrode1][~mask_1] = rem_j / electrode1_size
+    #
+    #     source_ox_2[electrode2][mask_2] = -rho_ox_2[electrode2][mask_2]
+    #     source_red_2[electrode2][mask_2] = rho_ox_2[electrode2][mask_2]
+    #     j_initial = torch.sum(rho_ox_2[electrode2][mask_2])
+    #     rem_j = q_diff - j_initial  # remaining current to be drawn from the other sites
+    #     source_red_2[electrode2][~mask_2] = rem_j / electrode2_size
+    #
+    #     j = q_diff
+    #     voltage_drop = j * resistor[i]
 
-    source_ox_2[electrode2] = -j / electrode2_size
-    source_red_2[electrode2] = j / electrode2_size
+    # BGK collision with source terms (Kruger page 310)
+    source_ox_1_i = torch.einsum('i,jk->ijk', w, source_ox_1)
+    source_red_1_i = torch.einsum('i,jk->ijk', w, source_red_1)
+    source_ox_2_i = torch.einsum('i,jk->ijk', w, source_ox_2)
+    source_red_2_i = torch.einsum('i,jk->ijk', w, source_red_2)
+    fout_ox_1 = fin_ox_1 - omega * (fin_ox_1 - feq_ox_1) + (1-1/(2 * tau)) * source_ox_1_i
+    fout_red_1 = fin_red_1 - omega * (fin_red_1 - feq_red_1) +(1-1/(2*tau))*source_red_1_i
+    fout_ox_2 = fin_ox_2 - omega * (fin_ox_2 - feq_ox_2) + (1-1/(2 * tau)) * source_ox_2_i
+    fout_red_2 = fin_red_2 - omega * (fin_red_2 - feq_red_2) +(1-1/(2*tau))*source_red_2_i
 
-    # BGK collision with source terms
-    fout_ox_1 = fin_ox_1 - omega * (fin_ox_1 - feq_ox_1) + (1-1/(2 * tau)) * torch.einsum('i,jk->ijk', w, source_ox_1)
-    fout_red_1 = fin_red_1 - omega * (fin_red_1 - feq_red_1) + (1-1/(2*tau))*torch.einsum('i,jk->ijk', w, source_red_1)
-    fout_ox_2 = fin_ox_2 - omega * (fin_ox_2 - feq_ox_2) + (1-1/(2 * tau)) * torch.einsum('i,jk->ijk', w, source_ox_2)
-    fout_red_2 = fin_red_2 - omega * (fin_red_2 - feq_red_2) + (1-1/(2*tau))*torch.einsum('i,jk->ijk', w, source_red_2)
     # Bounce Back
     fout_ox_1[:, obstacle] = fin_ox_1[c_op][:, obstacle]
     fout_red_1[:, obstacle] = fin_red_1[c_op][:, obstacle]
@@ -190,7 +237,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     # Track voltage and current
     v_track = np.zeros(iterations)
     j_track = np.zeros(iterations)
-    resistor = 1 - 0.5 * torch.heaviside(torch.arange(iterations) - torch.tensor(iterations) // 4, torch.tensor(1))
+    resistor = 1 - 0.5 * torch.heaviside(torch.arange(iterations) - torch.tensor(iterations) // 10, torch.tensor(1))
     plt.plot(resistor)
     plt.show()
 
@@ -225,7 +272,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 dt = time.time() - start
                 mlups = nx * ny * counter / (dt * 1e6)
                 if save_to_disk:
-                    q.put((rho_ox_1, f"output/{i // interval:05}.png"))
+                    q.put((rho_ox_1.clone(), f"output/{i // interval:05}.png"))
                 start = time.time()
                 counter = 0
             counter += 1
@@ -267,4 +314,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == "__main__":
     print(f"omega: {omega}")
-    run(9000, save_to_disk=True, interval=100, continue_last=False)
+    run(10000, save_to_disk=True, interval=100, continue_last=True)
