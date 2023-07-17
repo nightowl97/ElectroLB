@@ -41,10 +41,15 @@ inlet_top = generate_electrode_tensor(input_image, YELLOW)
 
 
 # Diffusion constant
-d = obstacle.shape[0] * 0.3 / Pe  # Lowering omega requires increasing the resolution
+nx, ny = obstacle.shape
+d = ny * 0.3 / Pe  # Lowering omega requires increasing the resolution
 tau = 3 * d + .5
 omega = 1 / tau
-nx, ny = obstacle.shape
+dx = height_ph / ny
+dt = d / diff_ph * dx ** 2
+print("dx: ", dx)
+print("dt: ", dt)
+print("Calc Vel: ", dt / dx * vel_ph)
 
 # Initialize
 rho_ox_1 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
@@ -166,47 +171,48 @@ def step(i):
     fin_red_2[right_col, 0, :] = feq_red_2[right_col, 0, :] + fin_red_2[left_col, 0, :] - feq_red_2[left_col, 0, :]
 
     # Average potential difference between two electrodes
-    # e_nernst_1 = E_01 - (R * T / F) * torch.log(rho_red_1[electrode1] / rho_ox_1[electrode1])
-    # e_nernst_2 = E_02 - (R * T / F) * torch.log(rho_red_2[electrode2] / rho_ox_2[electrode2])
+    e_nernst_1 = E_01 - (R * T / F) * torch.log(rho_red_1[electrode1] / rho_ox_1[electrode1])
+    e_nernst_2 = E_02 - (R * T / F) * torch.log(rho_red_2[electrode2] / rho_ox_2[electrode2])
 
     # Resulting average current
-    # voltage_drop = torch.mean(e_nernst_1) - torch.mean(e_nernst_2)
-    # J_ohm = voltage_drop / resistor[i]
-    # q_diff_1 = rho_red_1[electrode1].sum(0)
-    # q_diff_2 = rho_ox_2[electrode2].sum(0)
-    # q_diff = torch.min(q_diff_1, q_diff_2)
-    # # If resistance limited
-    # if J_ohm < q_diff:
-    #     q_1 = J_ohm / (2 * electrode1_size)
-    #     q_2 = J_ohm / (2 * electrode2_size)
-    #
-    #     j = J_ohm
-    #
-    #     # Source Terms
-    #     source_ox_1[electrode1] = q_1
-    #     source_red_1[electrode1] = -q_1
-    #
-    #     source_ox_2[electrode2] = -q_2
-    #     source_red_2[electrode2] = q_2
-    # else:  # If diffusion limited
-    #     # locate depletion regions in electrodes
-    #     mask_1 = q_diff / electrode1_size > rho_red_1[electrode1] / F  # Where we try to draw more than available
-    #     mask_2 = q_diff / electrode2_size > rho_ox_2[electrode2] / F  # Where we try to draw more than available
-    #
-    #     source_ox_1[electrode1][mask_1] = rho_red_1[electrode1][mask_1]
-    #     source_red_1[electrode1][mask_1] = -rho_red_1[electrode1][mask_1]
-    #     j_initial = torch.sum(rho_red_1[electrode1][mask_1])
-    #     rem_j = q_diff - j_initial  # remaining current to be drawn from the other sites
-    #     source_ox_1[electrode1][~mask_1] = rem_j / electrode1_size
-    #
-    #     source_ox_2[electrode2][mask_2] = -rho_ox_2[electrode2][mask_2]
-    #     source_red_2[electrode2][mask_2] = rho_ox_2[electrode2][mask_2]
-    #     j_initial = torch.sum(rho_ox_2[electrode2][mask_2])
-    #     rem_j = q_diff - j_initial  # remaining current to be drawn from the other sites
-    #     source_red_2[electrode2][~mask_2] = rem_j / electrode2_size
-    #
-    #     j = q_diff
-    #     voltage_drop = j * resistor[i]
+    voltage_drop = torch.mean(e_nernst_1) - torch.mean(e_nernst_2)
+    J_ohm = voltage_drop / resistor[i]
+    q_ohm = J_ohm * dt
+    q_diff_1 = rho_red_1[electrode1].sum(0) / F
+    q_diff_2 = rho_ox_2[electrode2].sum(0) / F
+    q_diff = torch.min(q_diff_1, q_diff_2)
+    # If resistance limited
+    if q_ohm < q_diff:
+        q_1 = J_ohm * dt / (2 * electrode1_size)
+        q_2 = J_ohm * dt / (2 * electrode2_size)
+
+        j = J_ohm
+
+        # Source Terms
+        source_ox_1[electrode1] = q_1
+        source_red_1[electrode1] = -q_1
+
+        source_ox_2[electrode2] = -q_2
+        source_red_2[electrode2] = q_2
+    else:  # If diffusion limited
+        # locate depletion regions in electrodes
+        mask_1 = q_diff / electrode1_size > rho_red_1[electrode1] / F  # Where we try to draw more than available
+        mask_2 = q_diff / electrode2_size > rho_ox_2[electrode2] / F  # Where we try to draw more than available
+
+        source_ox_1[electrode1][mask_1] = rho_red_1[electrode1][mask_1]
+        source_red_1[electrode1][mask_1] = -rho_red_1[electrode1][mask_1]
+        q_initial = torch.sum(rho_red_1[electrode1][mask_1])
+        rem_q = q_diff - q_initial  # remaining current to be drawn from the other sites
+        source_ox_1[electrode1][~mask_1] = rem_q / electrode1_size
+
+        source_ox_2[electrode2][mask_2] = -rho_ox_2[electrode2][mask_2]
+        source_red_2[electrode2][mask_2] = rho_ox_2[electrode2][mask_2]
+        q_initial = torch.sum(rho_ox_2[electrode2][mask_2])
+        rem_q = q_diff - q_initial  # remaining current to be drawn from the other sites
+        source_red_2[electrode2][~mask_2] = rem_q / electrode2_size
+
+        j = q_diff / dt
+        voltage_drop = j * resistor[i]
 
     # BGK collision with source terms (Kruger page 310)
     source_ox_1_i = torch.einsum('i,jk->ijk', w, source_ox_1)
@@ -237,7 +243,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     # Track voltage and current
     v_track = np.zeros(iterations)
     j_track = np.zeros(iterations)
-    resistor = 1 - 0.5 * torch.heaviside(torch.arange(iterations) - torch.tensor(iterations) // 10, torch.tensor(1))
+    resistor = 1 - 0.99 * torch.heaviside(torch.arange(iterations) - torch.tensor(iterations) // 10, torch.tensor(1))
     plt.plot(resistor)
     plt.show()
 
@@ -314,4 +320,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == "__main__":
     print(f"omega: {omega}")
-    run(10000, save_to_disk=True, interval=100, continue_last=True)
+    run(200, save_to_disk=True, interval=10, continue_last=True)
