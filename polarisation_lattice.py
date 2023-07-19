@@ -11,9 +11,10 @@ import numpy as np
 # Physical dimensions
 length_ph = 5e-2  # 5mm or 0.005m
 height_ph = 5e-3  # 2mm or 0.02m
-diff_ph = 0.76e-8  # m^2/s (From Allen, Bard appendix for Ferrocyanide, page 831)
+diff_ph = 0.76e-9  # m^2/s (From Allen, Bard appendix for Ferrocyanide, page 831)
 vel_ph = 0.01  # m/s
 Pe = vel_ph * height_ph / diff_ph  # Peclet number
+ph_concentration = 100  # mol/m^3 ~ 0.1M
 
 # External circuit load
 resistor = torch.ones(10, device=device)  # ohm
@@ -28,12 +29,14 @@ input_image = "input/mmrfbs/planar.png"
 obstacle = generate_obstacle_tensor(input_image)
 electrode1 = generate_electrode_tensor(input_image, BLUE)
 electrode2 = generate_electrode_tensor(input_image, RED)
-v_field = 300 * torch.from_numpy(np.load("output/BaseLattice_last_u.npy"))
+# TODO: properly treat velocity (should be below 0.1)
+v_field = 100 * torch.from_numpy(np.load("output/BaseLattice_last_u.npy"))
 v_field = v_field.clone().to(device)
+resistance_limited = False
 
 # Electrode lengths for current densities
-electrode1_size = electrode1.size(0)
-electrode2_size = electrode2.size(0)
+electrode1_size = torch.sum(electrode1)
+electrode2_size = torch.sum(electrode2)
 
 # inlets have different color coding to electrodes
 inlet_bottom = generate_electrode_tensor(input_image, GREEN)
@@ -42,7 +45,7 @@ inlet_top = generate_electrode_tensor(input_image, YELLOW)
 
 # Diffusion constant
 nx, ny = obstacle.shape
-d = ny * 0.3 / Pe  # Lowering omega requires increasing the resolution
+d = ny * 0.1 / Pe  # Lowering omega requires increasing the resolution
 tau = 3 * d + .5
 omega = 1 / tau
 dx = height_ph / ny
@@ -50,17 +53,24 @@ dt = d / diff_ph * dx ** 2
 print("dx: ", dx)
 print("dt: ", dt)
 print("Calc Vel: ", dt / dx * vel_ph)
+print("Actual Vel: ", np.max(v_field.cpu().numpy()))
+print("Peclet: ", Pe)
 
 # Initialize
-rho_ox_1 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
-rho_red_1 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
-rho_ox_2 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
-rho_red_2 = torch.zeros((nx, ny), dtype=torch.float64, device=device)
+rho_ox_1 = torch.ones((nx, ny), dtype=torch.float64, device=device)
+rho_red_1 = torch.ones((nx, ny), dtype=torch.float64, device=device)
+rho_ox_1[:, :ny // 2] = 0
+rho_red_1[:, :ny // 2] = 0
 
-feq_ox_1 = torch.zeros((9, nx, ny), device=device)
-feq_red_1 = torch.zeros((9, nx, ny), device=device)
-feq_ox_2 = torch.zeros((9, nx, ny), device=device)
-feq_red_2 = torch.zeros((9, nx, ny), device=device)
+rho_ox_2 = torch.ones((nx, ny), dtype=torch.float64, device=device)
+rho_red_2 = torch.ones((nx, ny), dtype=torch.float64, device=device)
+rho_ox_2[:, ny // 2:] = 0
+rho_red_2[:, ny // 2:] = 0
+
+feq_ox_1 = torch.ones((9, nx, ny), device=device)
+feq_red_1 = torch.ones((9, nx, ny), device=device)
+feq_ox_2 = torch.ones((9, nx, ny), device=device)
+feq_red_2 = torch.ones((9, nx, ny), device=device)
 
 
 def equilibrium():
@@ -144,7 +154,7 @@ def stream(fin, fout):
 
 def step(i):
     global fin_ox_1, fin_ox_2, fin_red_1, fin_red_2, e_nernst_1, voltage_drop, source_ox_1_i, source_red_1_i
-    global fout_ox_1, fout_ox_2, fout_red_1, fout_red_2, e_nernst_2, j, source_ox_2_i, source_red_2_i
+    global fout_ox_1, fout_ox_2, fout_red_1, fout_red_2, e_nernst_2, j, source_ox_2_i, source_red_2_i, resistance_limited
 
     fin_ox_1[left_col, -1, :] = fin_ox_1[left_col, -2, :]
     fin_red_1[left_col, -1, :] = fin_red_1[left_col, -2, :]
@@ -175,44 +185,60 @@ def step(i):
     e_nernst_2 = E_02 - (R * T / F) * torch.log(rho_red_2[electrode2] / rho_ox_2[electrode2])
 
     # Resulting average current
-    voltage_drop = torch.mean(e_nernst_1) - torch.mean(e_nernst_2)
-    J_ohm = voltage_drop / resistor[i]
-    q_ohm = J_ohm * dt
-    q_diff_1 = rho_red_1[electrode1].sum(0) / F
-    q_diff_2 = rho_ox_2[electrode2].sum(0) / F
-    q_diff = torch.min(q_diff_1, q_diff_2)
-    # If resistance limited
-    if q_ohm < q_diff:
-        q_1 = J_ohm * dt / (2 * electrode1_size)
-        q_2 = J_ohm * dt / (2 * electrode2_size)
+    voltage_drop = torch.mean(e_nernst_1) - torch.mean(e_nernst_2)  # In Volts
+    j_ohm = voltage_drop / resistor[i]  # In amps
+    q_ohm = j_ohm / F  # total production in entire electrode area in mol
+    q_ohm_per_site = q_ohm / (electrode1_size * dx**2)  # production per lattice site in mol/m^3
+    q_ohm_lbm = q_ohm_per_site / ph_concentration  # concentration in lattice units
+    q_ohm_lbm_total = q_ohm_lbm * electrode1_size  # total production in lattice units
 
-        j = J_ohm
+    q_diff_1_lbm = rho_red_1[electrode1][1:-1].sum(0)
+    q_diff_2_lbm = rho_ox_2[electrode2][1:-1].sum(0)
+
+    # determine limiting electrode reaction
+    if q_diff_1_lbm < q_diff_2_lbm:
+        q_diff_lbm = q_diff_1_lbm
+        limiting_electrode_size = electrode1_size
+    else:
+        q_diff_lbm = q_diff_2_lbm
+        limiting_electrode_size = electrode2_size
+
+    # If diffusion limited
+    if q_diff_lbm < q_ohm_lbm_total:
+        resistance_limited = False
+        q_1 = q_diff_lbm / electrode1_size
+        q_2 = q_diff_lbm / electrode2_size
+
+        q_diff_ph = q_1 * ph_concentration  # produced species in physical units (mol/m^3)
+        q_diff_total = q_diff_ph * (electrode1_size * dx ** 2)  # total production in entire electrode area in mol
+        j = q_diff_total * F / dt  # current in amps
+        voltage_drop = resistor[i] * j  # In Volts
 
         # Source Terms
-        source_ox_1[electrode1] = q_1
-        source_red_1[electrode1] = -q_1
+        source_ox_1[electrode1] = q_1 / 100
+        source_red_1[electrode1] = -q_1 / 100
 
-        source_ox_2[electrode2] = -q_2
-        source_red_2[electrode2] = q_2
-    else:  # If diffusion limited
+        source_ox_2[electrode2] = -q_2 / 100
+        source_red_2[electrode2] = q_2 / 100
+    else:  # If resistance limited
+        resistance_limited = True
         # locate depletion regions in electrodes
-        mask_1 = q_diff / electrode1_size > rho_red_1[electrode1] / F  # Where we try to draw more than available
-        mask_2 = q_diff / electrode2_size > rho_ox_2[electrode2] / F  # Where we try to draw more than available
+        mask_1 = q_ohm_lbm_total / electrode1_size > rho_red_1[electrode1]  # Where we try to draw more than available
+        mask_2 = q_ohm_lbm_total / electrode2_size > rho_ox_2[electrode2]  # Where we try to draw more than available
 
         source_ox_1[electrode1][mask_1] = rho_red_1[electrode1][mask_1]
         source_red_1[electrode1][mask_1] = -rho_red_1[electrode1][mask_1]
         q_initial = torch.sum(rho_red_1[electrode1][mask_1])
-        rem_q = q_diff - q_initial  # remaining current to be drawn from the other sites
+        rem_q = q_ohm_lbm_total - q_initial  # remaining current to be drawn from the other sites
         source_ox_1[electrode1][~mask_1] = rem_q / electrode1_size
 
         source_ox_2[electrode2][mask_2] = -rho_ox_2[electrode2][mask_2]
         source_red_2[electrode2][mask_2] = rho_ox_2[electrode2][mask_2]
         q_initial = torch.sum(rho_ox_2[electrode2][mask_2])
-        rem_q = q_diff - q_initial  # remaining current to be drawn from the other sites
+        rem_q = q_ohm_lbm_total - q_initial  # remaining current to be drawn from the other sites
         source_red_2[electrode2][~mask_2] = rem_q / electrode2_size
 
-        j = q_diff / dt
-        voltage_drop = j * resistor[i]
+        voltage_drop = j_ohm * resistor[i]
 
     # BGK collision with source terms (Kruger page 310)
     source_ox_1_i = torch.einsum('i,jk->ijk', w, source_ox_1)
@@ -238,12 +264,20 @@ def step(i):
 
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     global rho_ox_1, rho_red_1, fin_ox_1, fin_red_1, fout_ox_1, fout_red_1, voltage_drop
-    global rho_ox_2, rho_red_2, fin_ox_2, fin_red_2, fout_ox_2, fout_red_2, j, resistor
+    global rho_ox_2, rho_red_2, fin_ox_2, fin_red_2, fout_ox_2, fout_red_2, j, resistor, resistance_limited
 
     # Track voltage and current
     v_track = np.zeros(iterations)
     j_track = np.zeros(iterations)
-    resistor = 1 - 0.99 * torch.heaviside(torch.arange(iterations) - torch.tensor(iterations) // 10, torch.tensor(1))
+    # Try a bunch of resistances in the range of 0.01 to 100 ohms in a staircase fashion
+    # (stay constant for each fifth of iterations)
+    resistor = np.zeros(iterations)
+    # resistor[:iterations//5] = 0.01
+    # resistor[iterations//5:2*iterations//5] = 0.1
+    # resistor[2*iterations//5:3*iterations//5] = 1
+    # resistor[3*iterations//5:4*iterations//5] = 10
+    # resistor[4*iterations//5:] = 100
+
     plt.plot(resistor)
     plt.show()
 
@@ -281,11 +315,18 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                     q.put((rho_ox_1.clone(), f"output/{i // interval:05}.png"))
                 start = time.time()
                 counter = 0
+            if i % 1000 == 0:
+                # periodically save the state
+                np.save(f"output/temp/Electrochemical_last_rho_ox_1.npy", rho_ox_1.cpu().numpy())
+                np.save(f"output/temp/Electrochemical_last_rho_red_1.npy", rho_red_1.cpu().numpy())
+                np.save(f"output/temp/Electrochemical_last_rho_ox_2.npy", rho_ox_2.cpu().numpy())
+                np.save(f"output/temp/Electrochemical_last_rho_red_2.npy", rho_red_2.cpu().numpy())
             counter += 1
             # Log current and voltage
             v_track[i] = voltage_drop
             j_track[i] = j
-            bar.text(f"MLUPS: {mlups:.2f} | current {j:.5f} | voltage {voltage_drop:.5f}")
+            bar.text(f"MLUPS: {mlups:.2f} | current {j:.10f} | voltage {voltage_drop:.10f} | resistance {resistor[i]:.5f}"
+                     f" | resistance limited? {resistance_limited}")
             bar()
 
     # save final state
@@ -296,9 +337,14 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
     print(f"Last I and V are:\t{j_track[-1]}, and {v_track[-1]}")
     fig, ax = plt.subplots()
-    ax.plot(v_track)
+    ax.plot(j_track)
     plt.show()
     plt.close()
+    # plt.clf()
+    # plt.scatter(v_track, j_track)
+    # plt.xlabel("Voltage")
+    # plt.ylabel("Current")
+    # plt.show()
 
     if save_to_disk:
         q.put((None, None))
@@ -320,4 +366,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == "__main__":
     print(f"omega: {omega}")
-    run(200, save_to_disk=True, interval=10, continue_last=True)
+    run(1500, save_to_disk=True, interval=50, continue_last=False)
