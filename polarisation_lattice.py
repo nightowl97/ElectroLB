@@ -9,12 +9,13 @@ import time
 import numpy as np
 
 # Physical dimensions
-length_ph = 5e-2  # 5mm or 0.005m
-height_ph = 5e-3  # 2mm or 0.02m
+cell_length_ph = 5e-2 # 2.5cm or 0.025m
+channel_width_ph = 5e-3  # 5mm or 0.005m
+depth_ph = 5e-3  # 5mm
 diff_ph = 0.76e-9  # m^2/s (From Allen, Bard appendix for Ferrocyanide, page 831)
 vel_ph = 0.01  # m/s
-Pe = vel_ph * height_ph / diff_ph  # Peclet number
-ph_concentration = 100  # mol/m^3 ~ 0.1M
+Pe = vel_ph * channel_width_ph / diff_ph  # Peclet number
+concentration_ph = 100  # mol/m^3 ~ 0.1M
 
 # External circuit load
 resistor = torch.ones(10, device=device)  # ohm
@@ -23,6 +24,11 @@ j = 0  # current global variable
 # Formal potentials
 E_01 = 0.6
 E_02 = -0.6
+k = 1e-4  # rate constant
+
+# Track voltage and current
+v_track = 0
+j_track = 0
 
 input_image = "input/mmrfbs/planar.png"
 
@@ -48,7 +54,7 @@ nx, ny = obstacle.shape
 d = ny * 0.1 / Pe  # Lowering omega requires increasing the resolution
 tau = 3 * d + .5
 omega = 1 / tau
-dx = height_ph / ny
+dx = cell_length_ph / nx
 dt = d / diff_ph * dx ** 2
 print("dx: ", dx)
 print("dt: ", dt)
@@ -186,11 +192,11 @@ def step(i):
 
     # Resulting average current
     voltage_drop = torch.mean(e_nernst_1) - torch.mean(e_nernst_2)  # In Volts
-    j_ohm = voltage_drop / resistor[i]  # In amps
-    q_ohm = j_ohm / F  # total production in entire electrode area in mol
-    q_ohm_per_site = q_ohm / (electrode1_size * dx**2)  # production per lattice site in mol/m^3
-    q_ohm_lbm = q_ohm_per_site / ph_concentration  # concentration in lattice units
-    q_ohm_lbm_total = q_ohm_lbm * electrode1_size  # total production in lattice units
+    # j_ohm = voltage_drop / resistor[i]  # In amps
+    # q_ohm = j_ohm / F  # total production in entire electrode area in mol
+    # q_ohm_per_site = q_ohm / (electrode1_size * dx**2)  # production per lattice site in mol/m^3
+    # q_ohm_lbm = q_ohm_per_site / concentration_ph  # concentration in lattice units
+    # q_ohm_lbm_total = q_ohm_lbm * electrode1_size  # total production in lattice units
 
     q_diff_1_lbm = rho_red_1[electrode1][1:-1].sum(0)
     q_diff_2_lbm = rho_ox_2[electrode2][1:-1].sum(0)
@@ -204,41 +210,42 @@ def step(i):
         limiting_electrode_size = electrode2_size
 
     # If diffusion limited
-    if q_diff_lbm < q_ohm_lbm_total:
+    # if q_diff_lbm < q_ohm_lbm_total and i > 300:
+    if i > 300:
         resistance_limited = False
-        q_1 = q_diff_lbm / electrode1_size
-        q_2 = q_diff_lbm / electrode2_size
+        q_1 = (q_diff_lbm / electrode1_size) * k
+        q_2 = (q_diff_lbm / electrode2_size) * k
 
-        q_diff_ph = q_1 * ph_concentration  # produced species in physical units (mol/m^3)
-        q_diff_total = q_diff_ph * (electrode1_size * dx ** 2)  # total production in entire electrode area in mol
+        q_diff_ph = q_1 * concentration_ph  # produced species in physical units (mol/m^3)
+        q_diff_total = q_diff_ph * (electrode1_size * depth_ph * dx ** 2)  # production in entire electrode area (mol)
         j = q_diff_total * F / dt  # current in amps
-        voltage_drop = resistor[i] * j  # In Volts
+        # voltage_drop = resistor[i] * j  # In Volts
 
         # Source Terms
-        source_ox_1[electrode1] = q_1 / 100
-        source_red_1[electrode1] = -q_1 / 100
+        source_ox_1[electrode1] = q_1
+        source_red_1[electrode1] = -q_1
 
-        source_ox_2[electrode2] = -q_2 / 100
-        source_red_2[electrode2] = q_2 / 100
-    else:  # If resistance limited
-        resistance_limited = True
-        # locate depletion regions in electrodes
-        mask_1 = q_ohm_lbm_total / electrode1_size > rho_red_1[electrode1]  # Where we try to draw more than available
-        mask_2 = q_ohm_lbm_total / electrode2_size > rho_ox_2[electrode2]  # Where we try to draw more than available
-
-        source_ox_1[electrode1][mask_1] = rho_red_1[electrode1][mask_1]
-        source_red_1[electrode1][mask_1] = -rho_red_1[electrode1][mask_1]
-        q_initial = torch.sum(rho_red_1[electrode1][mask_1])
-        rem_q = q_ohm_lbm_total - q_initial  # remaining current to be drawn from the other sites
-        source_ox_1[electrode1][~mask_1] = rem_q / electrode1_size
-
-        source_ox_2[electrode2][mask_2] = -rho_ox_2[electrode2][mask_2]
-        source_red_2[electrode2][mask_2] = rho_ox_2[electrode2][mask_2]
-        q_initial = torch.sum(rho_ox_2[electrode2][mask_2])
-        rem_q = q_ohm_lbm_total - q_initial  # remaining current to be drawn from the other sites
-        source_red_2[electrode2][~mask_2] = rem_q / electrode2_size
-
-        voltage_drop = j_ohm * resistor[i]
+        source_ox_2[electrode2] = -q_2
+        source_red_2[electrode2] = q_2
+    # else:  # If resistance limited
+    #     resistance_limited = True
+    #     # locate depletion regions in electrodes
+    #     mask_1 = q_ohm_lbm_total / electrode1_size > rho_red_1[electrode1]  # Where we try to draw more than available
+    #     mask_2 = q_ohm_lbm_total / electrode2_size > rho_ox_2[electrode2]  # Where we try to draw more than available
+    #
+    #     source_ox_1[electrode1][mask_1] = rho_red_1[electrode1][mask_1]
+    #     source_red_1[electrode1][mask_1] = -rho_red_1[electrode1][mask_1]
+    #     q_initial = torch.sum(rho_red_1[electrode1][mask_1])
+    #     rem_q = q_ohm_lbm_total - q_initial  # remaining current to be drawn from the other sites
+    #     source_ox_1[electrode1][~mask_1] = rem_q / electrode1_size
+    #
+    #     source_ox_2[electrode2][mask_2] = -rho_ox_2[electrode2][mask_2]
+    #     source_red_2[electrode2][mask_2] = rho_ox_2[electrode2][mask_2]
+    #     q_initial = torch.sum(rho_ox_2[electrode2][mask_2])
+    #     rem_q = q_ohm_lbm_total - q_initial  # remaining current to be drawn from the other sites
+    #     source_red_2[electrode2][~mask_2] = rem_q / electrode2_size
+    #
+    #     voltage_drop = j_ohm * resistor[i]
 
     # BGK collision with source terms (Kruger page 310)
     source_ox_1_i = torch.einsum('i,jk->ijk', w, source_ox_1)
@@ -263,7 +270,7 @@ def step(i):
 
 
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
-    global rho_ox_1, rho_red_1, fin_ox_1, fin_red_1, fout_ox_1, fout_red_1, voltage_drop
+    global rho_ox_1, rho_red_1, fin_ox_1, fin_red_1, fout_ox_1, fout_red_1, voltage_drop, j_track, v_track
     global rho_ox_2, rho_red_2, fin_ox_2, fin_red_2, fout_ox_2, fout_red_2, j, resistor, resistance_limited
 
     # Track voltage and current
@@ -278,8 +285,8 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     # resistor[3*iterations//5:4*iterations//5] = 10
     # resistor[4*iterations//5:] = 100
 
-    plt.plot(resistor)
-    plt.show()
+    # plt.plot(resistor)
+    # plt.show()
 
     if continue_last:
         rho_ox_1 = torch.from_numpy(np.load("output/Electrochemical_last_rho_ox_1.npy")).to(device)
@@ -303,7 +310,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         t = threading.Thread(target=save_data, args=(q,))
         t.start()
 
-    with alive_bar(iterations) as bar:
+    with alive_bar(iterations, force_tty=True) as bar:
         start = time.time()
         counter = 0
         for i in range(iterations):
@@ -362,8 +369,9 @@ def save_data(q: queue.Queue):
         plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=2)
         plt.colorbar()
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
+        plt.close()
 
 
 if __name__ == "__main__":
     print(f"omega: {omega}")
-    run(1500, save_to_disk=True, interval=50, continue_last=False)
+    run(60000, save_to_disk=False, interval=100, continue_last=False)
