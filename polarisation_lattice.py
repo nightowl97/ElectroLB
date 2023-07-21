@@ -16,15 +16,17 @@ diff_ph = 0.76e-9  # m^2/s (From Allen, Bard appendix for Ferrocyanide, page 831
 vel_ph = 0.01  # m/s
 Pe = vel_ph * channel_width_ph / diff_ph  # Peclet number
 concentration_ph = 100  # mol/m^3 ~ 0.1M
+max_j_density_ph = 10  # A/m^2 or 1mA/cm^2
 
 # External circuit load
 resistor = torch.ones(10, device=device)  # ohm
 voltage_drop = 0  # volts
 j = 0  # current global variable
+j_density = 0  # current density global variable
 # Formal potentials
 E_01 = 0.6
 E_02 = -0.6
-k = 1e-4  # rate constant
+k = 1e-2  # rate constant
 
 # Track voltage and current
 v_track = 0
@@ -56,6 +58,12 @@ tau = 3 * d + .5
 omega = 1 / tau
 dx = cell_length_ph / nx
 dt = d / diff_ph * dx ** 2
+
+# Calculate max current from max current density and electrode size\
+# TODO: generalize to both electrodes
+max_j_ph = max_j_density_ph * electrode1_size * dx * depth_ph
+max_q_lbm_per_site = (max_j_ph * dt / F) / (electrode1_size * dx ** 2 * depth_ph) / concentration_ph
+
 print("dx: ", dx)
 print("dt: ", dt)
 print("Calc Vel: ", dt / dx * vel_ph)
@@ -128,38 +136,38 @@ def macroscopic():
 def stream(fin, fout):
     global nx, ny
     fin[1, 1:, :] = fout[1, :nx - 1, :]  # vel 1 increases x
-    fin[1, 0, :] = fout[1, -1, :]  # wrap
+    # fin[1, 0, :] = fout[1, -1, :]  # wrap
     fin[3, :nx - 1, :] = fout[3, 1:, :]  # vel 3 decreases x
-    fin[3, -1, :] = fout[3, 0, :]  # wrap
+    # fin[3, -1, :] = fout[3, 0, :]  # wrap
 
     fin[2, :, 1:] = fout[2, :, :ny - 1]  # vel 2 increases y
-    fin[2, :, 0] = fout[2, :, -1]  # wrap
+    # fin[2, :, 0] = fout[2, :, -1]  # wrap
     fin[4, :, :ny - 1] = fout[4, :, 1:]  # vel 4 decreases y
-    fin[4, :, -1] = fout[4, :, 0]  # wrap
+    # fin[4, :, -1] = fout[4, :, 0]  # wrap
 
     # vel 5 increases x and y simultaneously
     fin[5, 1:, 1:] = fout[5, :nx - 1, :ny - 1]
-    fin[5, 0, :] = fout[5, -1, :]  # wrap right
-    fin[5, :, 0] = fout[5, :, -1]  # wrap top
+    # fin[5, 0, :] = fout[5, -1, :]  # wrap right
+    # fin[5, :, 0] = fout[5, :, -1]  # wrap top
     # vel 7 decreases x and y simultaneously
     fin[7, :nx - 1, :ny - 1] = fout[7, 1:, 1:]
-    fin[7, -1, :] = fout[7, 0, :]  # wrap left
-    fin[7, :, -1] = fout[7, :, 0]  # wrap bottom
+    # fin[7, -1, :] = fout[7, 0, :]  # wrap left
+    # fin[7, :, -1] = fout[7, :, 0]  # wrap bottom
 
     # vel 6 decreases x and increases y
     fin[6, :nx - 1, 1:] = fout[6, 1:, :ny - 1]
-    fin[6, -1, :] = fout[6, 0, :]  # wrap left
-    fin[6, :, 0] = fout[6, :, -1]  # wrap top
+    # fin[6, -1, :] = fout[6, 0, :]  # wrap left
+    # fin[6, :, 0] = fout[6, :, -1]  # wrap top
     # vel 8 increases x and decreases y
     fin[8, 1:, :ny - 1] = fout[8, :nx - 1, 1:]
-    fin[8, 0, :] = fout[8, -1, :]  # wrap right
-    fin[8, :, -1] = fout[8, :, 0]  # wrap bottom
+    # fin[8, 0, :] = fout[8, -1, :]  # wrap right
+    # fin[8, :, -1] = fout[8, :, 0]  # wrap bottom
 
     fin[0, :, :] = fout[0, :, :]
 
 
 def step(i):
-    global fin_ox_1, fin_ox_2, fin_red_1, fin_red_2, e_nernst_1, voltage_drop, source_ox_1_i, source_red_1_i
+    global fin_ox_1, fin_ox_2, fin_red_1, fin_red_2, e_nernst_1, voltage_drop, source_ox_1_i, source_red_1_i, j_density
     global fout_ox_1, fout_ox_2, fout_red_1, fout_red_2, e_nernst_2, j, source_ox_2_i, source_red_2_i, resistance_limited
 
     fin_ox_1[left_col, -1, :] = fin_ox_1[left_col, -2, :]
@@ -213,12 +221,13 @@ def step(i):
     # if q_diff_lbm < q_ohm_lbm_total and i > 300:
     if i > 300:
         resistance_limited = False
-        q_1 = (q_diff_lbm / electrode1_size) * k
-        q_2 = (q_diff_lbm / electrode2_size) * k
+        q_1 = torch.clamp((q_diff_lbm / electrode1_size), 0, max_q_lbm_per_site)
+        q_2 = torch.clamp((q_diff_lbm / electrode2_size), 0, max_q_lbm_per_site)
 
         q_diff_ph = q_1 * concentration_ph  # produced species in physical units (mol/m^3)
         q_diff_total = q_diff_ph * (electrode1_size * depth_ph * dx ** 2)  # production in entire electrode area (mol)
         j = q_diff_total * F / dt  # current in amps
+        j_density = j / (electrode1_size * dx * depth_ph)  # current density in amps/m^2
         # voltage_drop = resistor[i] * j  # In Volts
 
         # Source Terms
@@ -331,8 +340,8 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
             counter += 1
             # Log current and voltage
             v_track[i] = voltage_drop
-            j_track[i] = j
-            bar.text(f"MLUPS: {mlups:.2f} | current {j:.10f} | voltage {voltage_drop:.10f} | resistance {resistor[i]:.5f}"
+            j_track[i] = j_density
+            bar.text(f"MLUPS: {mlups:.2f} | current density {j_density:.10f} | voltage {voltage_drop:.10f} | resistance {resistor[i]:.5f}"
                      f" | resistance limited? {resistance_limited}")
             bar()
 
@@ -374,4 +383,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == "__main__":
     print(f"omega: {omega}")
-    run(60000, save_to_disk=False, interval=100, continue_last=False)
+    run(130000, save_to_disk=True, interval=100, continue_last=True)

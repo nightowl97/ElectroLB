@@ -97,3 +97,42 @@ def save_data(q: queue.Queue, inlet_vel, obstacle):
         fig.colorbar(cax1, ax=ax1)
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=600)
         plt.close(fig)
+
+
+def convert_to_physical_velocity(velocity_array, dx, dt):
+    # Convert lattice velocity to physical velocity
+    # C_factor * lattice_velocity = physical_velocity
+    conversion_factor = dx / dt  # lattice velocity to physical velocity
+    return velocity_array * conversion_factor
+
+
+def convert_to_lattice_velocity(velocity_array, dx, dt):
+    return velocity_array / (dx / dt)
+
+
+def get_lattice_viscosity_from_tau_l(tau):
+    """Kruger page 272"""
+    return (1 / 3) * (tau - .5)
+
+
+def convert_from_physical_params_ns(total_length_ph, channel_width_ph, char_velocity_ph, viscosity_ph,
+                                    lattice_size, omega_l):
+    # Kruger page 283 example
+    re = channel_width_ph * char_velocity_ph / viscosity_ph
+    dx = total_length_ph / lattice_size
+    inlet_width_l = channel_width_ph / dx
+
+    tau_l = 1 / omega_l
+    nu_l = get_lattice_viscosity_from_tau_l(tau_l)
+
+    dt = (1 / 3) * ((tau_l - 0.5) * dx ** 2) / viscosity_ph
+    ulb = char_velocity_ph / (dx / dt)  # C_factor * lattice_velocity = physical_velocity
+    assert np.abs(ulb - (re * nu_l / inlet_width_l)) < 1e-5
+    print("Simulation parameters:")
+    print(f"Re: {re}")
+    print(f"dt: {dt}")
+    print(f"dx: {dx}")
+    print(f"ulb: {ulb}")
+    print(f"omega_l: {omega_l}")
+    print(f"nu_l: {nu_l}")
+    return re, dx, dt, ulb

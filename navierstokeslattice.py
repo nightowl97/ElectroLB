@@ -9,17 +9,25 @@ import time
 from util import *
 # To Generate ffmpeg video from images
 # ffmpeg -f image2 -framerate 30 -i %05d.png -s 1080x720 -pix_fmt yuv420p output.mp4
+# to speed up playback to real time use
+# ffmpeg -i input.mp4 -filter:v "setpts=0.5*PTS" output.mp4
+# instead of 0.5 use 1/(current_playback_length / target_playback_length)
 
 """Simulation parameters"""
+u_ph = 5e-3  # m/s ~ 5mm/s
+visc_ph = 1.0035e-6  # m^2/s water at 25C
+inlet_width_ph = .23e-2  # m = .23cm
+re_ph = u_ph * inlet_width_ph / visc_ph  # Reynolds number
+cell_length_ph = 3e-2  # 3cm
+
 # Create obstacle tensor from numpy array`
 obstacle = generate_obstacle_tensor('input/mmrfbs/planar.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 1  # Reynolds number
-ulb = 0.0005  # characteristic velocity (inlet)
-nulb = ulb * ny / re  # kinematic viscosity
-omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
-print(f"omega: {omega}")
+omega_l = 1
+
+re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, inlet_width_ph, u_ph, visc_ph, nx, omega_l)
+input("Press enter to continue...")
 
 
 def equilibrium():
@@ -114,7 +122,7 @@ def step():
     fin[right_col, 0, :] = feq[right_col, 0, :] + fin[left_col, 0, :] - feq[left_col, 0, :]
 
     # BGK collision
-    fout = fin - omega * (fin - feq)
+    fout = fin - omega_l * (fin - feq)
 
     # Bounce-back
     fout[:, obstacle] = fin[c_op][:, obstacle]
@@ -125,7 +133,9 @@ def step():
 
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
-    global rho, u, fin, fout
+    global rho, u, fin, fout, dx, dt
+    print(f"Simulating {iterations * dt} seconds")
+
     if continue_last:  # Continue last computation
         rho = torch.from_numpy(np.load("output/BaseLattice_last_rho.npy")).to(device)
         u = torch.from_numpy(np.load("output/BaseLattice_last_u.npy")).to(device)
@@ -148,11 +158,12 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
             step()  # Perform one LBM step
             if i % interval == 0:
                 # Calculate MLUPS by dividing number of nodes by time in seconds
-                dt = time.time() - start
-                mlups = nx * ny * counter / (dt * 1e6)
+                delta_t = time.time() - start
+                mlups = nx * ny * counter / (delta_t * 1e6)
                 if save_to_disk:
                     # push data to queue
-                    q.put(((u, rho), f"output/{i // interval:05}.png"))  # Five digit filename
+                    velocity = convert_to_physical_velocity(u, dx, dt)
+                    q.put(((velocity, rho), f"output/{i // interval:05}.png"))  # Five digit filename
                 # Reset timer and counter
                 start = time.time()
                 counter = 0
@@ -176,4 +187,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(60000, save_to_disk=True, interval=100, continue_last=False)
+    run(20000, save_to_disk=True, interval=100, continue_last=False)

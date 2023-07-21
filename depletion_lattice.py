@@ -12,7 +12,7 @@ import numpy as np
 cell_length_ph = 5e-2  # 2.5cm or 0.025m
 channel_width_ph = 5e-3  # 5mm or 0.005m
 depth_ph = 5e-3  # 5mm
-diff_ph = 0.76e-9  # m^2/s (From Allen , Bard appendix for Ferrocyanide, page 831)
+diff_ph = 0.76e-7  # m^2/s (From Allen , Bard appendix for Ferrocyanide, page 831)
 vel_ph = 0.01  # m/s
 Pe = vel_ph * channel_width_ph / diff_ph  # Peclet number
 concentration_ph = 100  # mol/m^3 ~ 0.1M
@@ -37,7 +37,7 @@ inlet_top = generate_electrode_tensor(input_image, YELLOW)
 
 # Diffusion constant
 nx, ny = obstacle.shape
-d = ny * 0.1 / Pe  # Lowering omega requires increasing the resolution
+d = ny * 0.1 / Pe  # Lowering omega requires increasing the resolution, 0.1 is lattice velocity
 tau = 3 * d + .5
 omega = 1 / tau
 dx = cell_length_ph / nx
@@ -51,6 +51,7 @@ print("Peclet: ", Pe)
 # Initialize
 rho_ox_1 = torch.ones((nx, ny), dtype=torch.float64, device=device)
 feq_ox_1 = torch.ones((9, nx, ny), device=device)
+rho_ox_1[:, :ny // 2] = 0
 
 
 def equilibrium():
@@ -74,32 +75,32 @@ def macroscopic():
 def stream(fin, fout):
     global nx, ny
     fin[1, 1:, :] = fout[1, :nx - 1, :]  # vel 1 increases x
-    fin[1, 0, :] = fout[1, -1, :]  # wrap
+    # fin[1, 0, :] = fout[1, -1, :]  # wrap
     fin[3, :nx - 1, :] = fout[3, 1:, :]  # vel 3 decreases x
-    fin[3, -1, :] = fout[3, 0, :]  # wrap
+    # fin[3, -1, :] = fout[3, 0, :]  # wrap
 
     fin[2, :, 1:] = fout[2, :, :ny - 1]  # vel 2 increases y
-    fin[2, :, 0] = fout[2, :, -1]  # wrap
+    # fin[2, :, 0] = fout[2, :, -1]  # wrap
     fin[4, :, :ny - 1] = fout[4, :, 1:]  # vel 4 decreases y
-    fin[4, :, -1] = fout[4, :, 0]  # wrap
+    # fin[4, :, -1] = fout[4, :, 0]  # wrap
 
     # vel 5 increases x and y simultaneously
     fin[5, 1:, 1:] = fout[5, :nx - 1, :ny - 1]
-    fin[5, 0, :] = fout[5, -1, :]  # wrap right
-    fin[5, :, 0] = fout[5, :, -1]  # wrap top
+    # fin[5, 0, :] = fout[5, -1, :]  # wrap right
+    # fin[5, :, 0] = fout[5, :, -1]  # wrap top
     # vel 7 decreases x and y simultaneously
     fin[7, :nx - 1, :ny - 1] = fout[7, 1:, 1:]
-    fin[7, -1, :] = fout[7, 0, :]  # wrap left
-    fin[7, :, -1] = fout[7, :, 0]  # wrap bottom
+    # fin[7, -1, :] = fout[7, 0, :]  # wrap left
+    # fin[7, :, -1] = fout[7, :, 0]  # wrap bottom
 
     # vel 6 decreases x and increases y
     fin[6, :nx - 1, 1:] = fout[6, 1:, :ny - 1]
-    fin[6, -1, :] = fout[6, 0, :]  # wrap left
-    fin[6, :, 0] = fout[6, :, -1]  # wrap top
+    # fin[6, -1, :] = fout[6, 0, :]  # wrap left
+    # fin[6, :, 0] = fout[6, :, -1]  # wrap top
     # vel 8 increases x and decreases y
     fin[8, 1:, :ny - 1] = fout[8, :nx - 1, 1:]
-    fin[8, 0, :] = fout[8, -1, :]  # wrap right
-    fin[8, :, -1] = fout[8, :, 0]  # wrap bottom
+    # fin[8, 0, :] = fout[8, -1, :]  # wrap right
+    # fin[8, :, -1] = fout[8, :, 0]  # wrap bottom
 
     fin[0, :, :] = fout[0, :, :]
 
@@ -113,6 +114,7 @@ def step(i):
     # Inlet concentrations
     rho_ox_1[inlet_bottom] = 1
     rho_ox_1[inlet_top] = 0
+    rho_ox_1[electrode1] = 2
 
     equilibrium()
 
@@ -189,4 +191,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == "__main__":
     print(f"omega: {omega}")
-    run(60000, save_to_disk=False, interval=100, continue_last=False)
+    run(180000, save_to_disk=True, interval=1000, continue_last=False)

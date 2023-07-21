@@ -10,16 +10,20 @@ from scipy import linalg
 """
 Solves the NS equations for pressure inlet of microfluidic redox flow battery
 """
+u_ph = 5e-3  # m/s
+visc_ph = 1.0035e-6  # m^2/s water at 25C
+inlet_width_ph = 1e-3  # m = 5mm
+re_ph = u_ph * inlet_width_ph / visc_ph  # Reynolds number
+cell_length_ph = 3e-2  # 3cm
 
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/mmrfbs/MMRFB_v0.png')
+obstacle = generate_obstacle_tensor('input/mmrfbs/planar.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 1  # Reynolds number
-ulb = 0.00002  # characteristic velocity
-nulb = ulb * ny / re  # kinematic viscosity
-omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
-print(f"omega: {omega}")
+omega_l = .5
+
+re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, inlet_width_ph, u_ph, visc_ph, nx, omega_l)
+input("Press enter to continue...")
 
 
 def equilibrium():
@@ -33,9 +37,6 @@ def equilibrium():
 # Initialize macroscopic variables
 rho = torch.ones((nx, ny), device=device).float()
 u = torch.zeros((2, nx, ny), device=device).float()
-last_u = torch.zeros((2, nx, ny), device=device).float()  # last u for convergence
-delta_u = 100
-delta_u_list = np.zeros(100000)
 
 # Initialize populations
 feq = torch.zeros((9, nx, ny), device=device).float()
@@ -93,15 +94,13 @@ def stream():
 
 
 def step():
-    global fin, fout, rho, u, last_u, delta_u
+    global fin, fout, rho, u
     # Perform one LBM step
     # Outlet BC
     # Doing this first is more stable for some reason
     fin[left_col, -1, :] = fin[left_col, -2, :]
 
     macroscopic()  # Calculate macroscopic variables
-    delta_u = torch.linalg.vector_norm(u[:] - last_u[:])
-    last_u = u.clone()
     # Impose conditions on macroscopic variables
     u[1, :, 0] = ulb * torch.ones(nx, device=device).float()
     u[1, :, -1] = - ulb * torch.ones(nx, device=device).float()
@@ -125,7 +124,7 @@ def step():
     # fin[right_col, 0, :] = feq[right_col, 0, :] + fin[left_col, 0, :] - feq[left_col, 0, :]
 
     # BGK collision
-    fout = fin - omega * (fin - feq)
+    fout = fin - omega_l * (fin - feq)
 
     # Bounce-back
     fout[:, obstacle] = fin[c_op][:, obstacle]
@@ -136,8 +135,8 @@ def step():
 
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
-    global rho, u, fin, fout, last_u, delta_u_list
-    delta_u_list = np.zeros(iterations)
+    global rho, u, fin, fout, dx, dt
+    print(f"Simulating {iterations * dt} seconds")
 
     if continue_last:  # Continue last computation
         rho = torch.from_numpy(np.load("output/BaseLattice_last_rho.npy")).to(device)
@@ -154,33 +153,30 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         t.start()
 
     # Run LBM for specified number of iterations
-    with alive_bar(iterations) as bar:
+    with alive_bar(iterations, force_tty=True) as bar:
         start = time.time()
         counter = 0
         for i in range(iterations):
             step()  # Perform one LBM step
-            delta_u_list[i] = delta_u
             if i % interval == 0:
                 # Calculate MLUPS by dividing number of nodes by time in seconds
-                dt = time.time() - start
-                mlups = nx * ny * counter / (dt * 1e6)
+                delta_t = time.time() - start
+                mlups = nx * ny * counter / (delta_t * 1e6)
                 if save_to_disk:
                     # push data to queue
+                    velocity = convert_to_physical_velocity(u, dx, dt)
                     q.put(((u, rho), f"output/{i // interval:05}.png"))  # Five digit filename
                 # Reset timer and counter
                 start = time.time()
                 counter = 0
 
             counter += 1
-            bar.text(f"MLUPS: {mlups:.2f}\t Delta: {delta_u}")
+            bar.text(f"MLUPS: {mlups:.2f}\t |")
             bar()
 
     # Save final data to numpy files
     np.save(f"output/BaseLattice_last_u.npy", u.cpu().numpy())
     np.save(f"output/BaseLattice_last_rho.npy", rho.cpu().numpy())
-    fig, ax = plt.subplots()
-    ax.semilogy(np.asarray(delta_u_list[2:]))
-    plt.show()
 
     if save_to_disk:
         # Stop thread for saving data
@@ -190,4 +186,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(1000, save_to_disk=True, interval=10, continue_last=True)
+    run(2000, save_to_disk=True, interval=100, continue_last=False)
