@@ -17,37 +17,28 @@ vel_ph = 0.01  # m/s
 Pe = vel_ph * channel_width_ph / diff_ph  # Peclet number
 concentration_ph = 100  # mol/m^3 ~ 0.1M
 
-input_image = "input/mmrfbs/planar.png"
+input_image = "input/mmrfbs/MMRFB_v1.png"
 
 obstacle = generate_obstacle_tensor(input_image)
 electrode1 = generate_electrode_tensor(input_image, BLUE)
-electrode2 = generate_electrode_tensor(input_image, RED)
 # TODO: properly treat velocity (should be below 0.1)
-v_field = 100 * torch.from_numpy(np.load("output/BaseLattice_last_u.npy"))
-v_field = v_field.clone().to(device)
-resistance_limited = False
+v_field = torch.from_numpy(np.load("output/BaseLattice_last_u.npy"))
+v_field = v_field.to(device)
 
 # Electrode lengths for current densities
 electrode1_size = torch.sum(electrode1)
-electrode2_size = torch.sum(electrode2)
 
 # inlets have different color coding to electrodes
 inlet_bottom = generate_electrode_tensor(input_image, GREEN)
 inlet_top = generate_electrode_tensor(input_image, YELLOW)
 
+
 # Diffusion constant
 nx, ny = obstacle.shape
-d = ny * 0.1 / Pe  # Lowering omega requires increasing the resolution, 0.1 is lattice velocity
-tau = 3 * d + .5
-omega = 1 / tau
-dx = cell_length_ph / nx
-dt = d / diff_ph * dx ** 2
-print("dx: ", dx)
-print("dt: ", dt)
-print("Calc Vel: ", dt / dx * vel_ph)
-print("Actual Vel: ", np.max(v_field.cpu().numpy()))
-print("Peclet: ", Pe)
-
+omega_l = 1.8
+re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, channel_width_ph, vel_ph, diff_ph, nx, omega_l)
+input("Press enter to continue...")
+v_field = v_field / torch.max(v_field) * ulb
 # Initialize
 rho_ox_1 = torch.ones((nx, ny), dtype=torch.float64, device=device)
 feq_ox_1 = torch.ones((9, nx, ny), device=device)
@@ -114,14 +105,14 @@ def step(i):
     # Inlet concentrations
     rho_ox_1[inlet_bottom] = 1
     rho_ox_1[inlet_top] = 0
-    rho_ox_1[electrode1] = 2
+    rho_ox_1[electrode1] = 0
 
     equilibrium()
 
     # Zhou He BC
     fin_ox_1[right_col, 0, :] = feq_ox_1[right_col, 0, :] + fin_ox_1[left_col, 0, :] - feq_ox_1[left_col, 0, :]
 
-    fout_ox_1 = fin_ox_1 - omega * (fin_ox_1 - feq_ox_1)
+    fout_ox_1 = fin_ox_1 - omega_l * (fin_ox_1 - feq_ox_1)
 
     # Bounce Back
     fout_ox_1[:, obstacle] = fin_ox_1[c_op][:, obstacle]
@@ -132,10 +123,10 @@ def step(i):
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     global rho_ox_1, fin_ox_1
 
-    # Try a bunch of resistances in the range of 0.01 to 100 ohms in a staircase fashion
+    print(f"Simulating {iterations * dt} seconds")
 
     if continue_last:
-        rho_ox_1 = torch.from_numpy(np.load("output/Electrochemical_last_rho_ox_1.npy")).to(device)
+        rho_ox_1 = torch.from_numpy(np.load("output/Depletion_last_rho_ox_1.npy")).to(device)
 
         equilibrium()
 
@@ -160,15 +151,14 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 counter = 0
             if i % 1000 == 0:
                 # periodically save the state
-                np.save(f"output/temp/Electrochemical_last_rho_ox_1.npy", rho_ox_1.cpu().numpy())
+                np.save(f"output/temp/Depletion_last_rho_ox_1.npy", rho_ox_1.cpu().numpy())
             counter += 1
             bar.text(
-                f"MLUPS: {mlups:.2f}"
-                f" | resistance limited? {resistance_limited}")
+                f"MLUPS: {mlups:.2f}")
             bar()
 
     # save final state
-    np.save(f"output/Electrochemical_last_rho_ox_1.npy", rho_ox_1.cpu().numpy())
+    np.save(f"output/Depletion_last_rho_ox_1.npy", rho_ox_1.cpu().numpy())
 
     if save_to_disk:
         q.put((None, None))
@@ -190,5 +180,4 @@ def save_data(q: queue.Queue):
 
 
 if __name__ == "__main__":
-    print(f"omega: {omega}")
-    run(180000, save_to_disk=True, interval=1000, continue_last=False)
+    run(15000, save_to_disk=True, interval=1000, continue_last=True)

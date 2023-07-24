@@ -11,7 +11,7 @@ from util import *
 cmap = matplotlib.colormaps['Greys']
 display_interface = False  # Colors Electrodes sfc in blue for identification in LBM obstacle
 
-nx, ny = 4042, 400  # domain dimensions
+nx, ny = 2666, 265  # domain dimensions
 target_rho = 0.7
 
 
@@ -49,7 +49,7 @@ cov = np.asarray([[1, 0],
                   [0, 1]])  # Covariance matrix
 
 # Generate the kernel
-kernel = gaussian_kernel(size, mean, 1 * cov, angle=np.pi / 9)
+kernel = gaussian_kernel(size, mean, .5 * cov, angle=np.pi / 9)
 
 plt.imshow(kernel, interpolation='none')
 plt.axis('off')

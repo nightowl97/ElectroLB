@@ -136,3 +136,15 @@ def convert_from_physical_params_ns(total_length_ph, channel_width_ph, char_velo
     print(f"omega_l: {omega_l}")
     print(f"nu_l: {nu_l}")
     return re, dx, dt, ulb
+
+
+# def convert_from_physical_params_diff(total_length_ph, channel_width_ph, char_velocity_ph, diffusion_coeff_ph,
+#                                     lattice_size, omega_l):
+#     pe = char_velocity_ph * channel_width_ph / diffusion_coeff_ph
+#     dx = total_length_ph / lattice_size
+#     inlet_width_l = channel_width_ph / dx
+#
+#     tau_l = 1 / omega_l
+#     nu_l = get_lattice_viscosity_from_tau_l(tau_l)
+#
+#     dt = (1 / 3) * ((tau_l - 0.5) * dx ** 2) / diffusion_coeff_ph
