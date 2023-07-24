@@ -173,11 +173,11 @@ def save_data(q: queue.Queue):
         plt.clf()
         plt.axis('off')
         data[obstacle] = np.nan
-        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=2)
+        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1.5)
         plt.colorbar()
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
         plt.close()
 
 
 if __name__ == "__main__":
-    run(15000, save_to_disk=True, interval=1000, continue_last=True)
+    run(5000, save_to_disk=True, interval=100, continue_last=True)

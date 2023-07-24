@@ -147,7 +147,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         # Create queue for saving data to disk
         q = queue.Queue()
         # Create thread for saving data
-        t = threading.Thread(target=save_data, args=(q, ulb, obstacle))
+        t = threading.Thread(target=save_data, args=(q, obstacle))
         t.start()
 
     # Run LBM for specified number of iterations

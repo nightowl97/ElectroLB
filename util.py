@@ -71,7 +71,7 @@ def generate_electrode_tensor(file, color=BLUE):
     return electrode
 
 
-def save_data(q: queue.Queue, inlet_vel, obstacle):
+def save_data(q: queue.Queue, obstacle):
     # Save data to disk by running a separate thread that gets data from a queue
     while True:
         data, filename = q.get()

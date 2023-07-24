@@ -14,12 +14,13 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/pdrop/pdrop3_vert3.png')
+obstacle = generate_obstacle_tensor('input/pdrop/pdrop3_45deg4.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 re = 10  # Reynolds number
 ulb = 0.001  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
+print("nulb:", nulb)
 omega = 1 / (3 * nulb + 0.5)  # relaxation parameter
 
 
@@ -125,8 +126,8 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
     global rho, u, fin, fout
     if continue_last:  # Continue last computation
-        rho = torch.from_numpy(np.load("output/BaseLattice_last_rho.npy")).to(device)
-        u = torch.from_numpy(np.load("output/BaseLattice_last_u.npy")).to(device)
+        rho = torch.from_numpy(np.load("output/PdropLattice_last_rho.npy")).to(device)
+        u = torch.from_numpy(np.load("output/PdropLattice_last_u.npy")).to(device)
         equilibrium()
         fin = feq.clone()  # Initialize incoming populations (pre-collision)
         fout = feq.clone()  # Initialize outgoing populations (post-collision)
@@ -135,11 +136,11 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         # Create queue for saving data to disk
         q = queue.Queue()
         # Create thread for saving data
-        t = threading.Thread(target=save_data, args=(q,))
+        t = threading.Thread(target=save_data, args=(q, obstacle))
         t.start()
 
     # Run LBM for specified number of iterations
-    with alive_bar(iterations) as bar:
+    with alive_bar(iterations, force_tty=True) as bar:
         start = time.time()
         counter = 0
         for i in range(iterations):
@@ -161,8 +162,8 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
             bar()
 
     # Save final data to numpy files
-    np.save(f"output/BaseLattice_last_u.npy", u.cpu().numpy())
-    np.save(f"output/BaseLattice_last_rho.npy", rho.cpu().numpy())
+    np.save(f"output/PdropLattice_last_u.npy", u.cpu().numpy())
+    np.save(f"output/PdropLattice_last_rho.npy", rho.cpu().numpy())
 
     if save_to_disk:
         # Stop thread for saving data
@@ -172,11 +173,20 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print(f"omega: {omega}")
-    iterations = 30000
+    iterations = 20000
     ddp = torch.zeros(iterations, device=device)  # Keep track of pressure drop evolution
-    run(iterations, save_to_disk=True, interval=1000, continue_last=False)
+    run(iterations, save_to_disk=False, interval=1000, continue_last=False)
 
     plt.clf()
     plt.plot(np.arange(iterations), ddp.cpu().numpy(), label="Pressure drop")  # Plot pressure drop evolution
     plt.show()
+    print("Pressure drop:")
     print(ddp[-1].item())
+
+    # Calculate permeability
+    # mean velocity at outlet
+    L = 300
+    u_mean = torch.mean(u[0, -1, :])
+    k = u_mean * nulb * L / ddp[-1].item()
+    print(f"Permeability: {k.cpu().numpy()}")
+
