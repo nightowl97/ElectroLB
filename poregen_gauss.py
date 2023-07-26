@@ -11,8 +11,8 @@ from util import *
 cmap = matplotlib.colormaps['Greys']
 display_interface = False  # Colors Electrodes sfc in blue for identification in LBM obstacle
 
-nx, ny = 2666, 265  # domain dimensions
-target_rho = 0.7
+nx, ny = 201, 600  # domain dimensions
+target_rho = 0.85
 
 
 # Custom gaussian kernel with multivariate normal distribution and custom covariance matrix
@@ -49,7 +49,7 @@ cov = np.asarray([[1, 0],
                   [0, 1]])  # Covariance matrix
 
 # Generate the kernel
-kernel = gaussian_kernel(size, mean, .5 * cov, angle=np.pi / 9)
+kernel = gaussian_kernel(size, mean, .005 * cov, angle=np.pi / 9)
 
 plt.imshow(kernel, interpolation='none')
 plt.axis('off')
@@ -85,9 +85,9 @@ for i in range(1, nx - 1):
             interface[i, j] = True
 
 # Obstacles on Boundaries are considered electrode surface
-# interface[0, final[0]] = True
-# interface[-1, final[-1]] = True
-interface[final[:, 0], 0] = True
+interface[0, final[0]] = True
+interface[-1, final[-1]] = True
+# interface[final[:, 0], 0] = True
 interface[final[:, -1], -1] = True
 
 print("Drawing Image..")
@@ -95,5 +95,5 @@ rgb_array = 255 * np.ones((nx, ny, 3))
 rgb_array[final, :] = np.asarray(BLACK)
 rgb_array[interface, :] = np.asarray(BLUE)
 image = Image.fromarray(rgb_array.transpose(1, 0, 2).astype(np.uint8), mode='RGB')
-image.save(f'output/electrode_0.7.png')
+image.save(f'output/electrode.png')
 print("Done.")

@@ -39,6 +39,7 @@ omega_l = 1.8
 re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, channel_width_ph, vel_ph, diff_ph, nx, omega_l)
 input("Press enter to continue...")
 v_field = v_field / torch.max(v_field) * ulb
+
 # Initialize
 rho_ox_1 = torch.ones((nx, ny), dtype=torch.float64, device=device)
 feq_ox_1 = torch.ones((9, nx, ny), device=device)

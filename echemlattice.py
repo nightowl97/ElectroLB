@@ -1,3 +1,4 @@
+import matplotlib.pyplot as plt
 import numpy as np
 import torch
 from PIL import Image
@@ -8,26 +9,30 @@ from alive_progress import alive_bar
 import time
 from scipy.signal import sawtooth
 
-# Solves the convective-diffusion equation for a species in an electrochemical system
+# Solves the convective-diffusion equation for a species in an electrochemical system and performs cyclic voltametry
+
+# Physical constants
+cell_size_ph = 5e-2  # 5cm or 0.05m
+cell_depth_ph = 5e-3  # 5mm or 0.005m
+concentration_ph = 100  # mol/m^3 or 0.1M
+
 z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
-alpha = 0.65e-5  # Diffusion coefficient (Bard page 1013)
-j0 = 1e-3  # Exchange current density
+d_ph = 0.76e-7  # m^2/s Diffusion coefficient (Bard page 1013)
+j0 = 1e-8  # Exchange current density in A/m^2
 
-electrode = generate_electrode_tensor("input/ecell.png")
-obstacle = generate_obstacle_tensor("input/ecell.png")
-v_field = torch.from_numpy(np.load('output/BaseLattice_last_u.npy'))
-v_field = v_field.clone().to(device)  # Velocity field
-
-v_field[:, :, :] = 0  # temporary
-
+electrode = generate_electrode_tensor("input/echem_cells/planar_electrode.png")
+obstacle = generate_obstacle_tensor("input/echem_cells/planar_electrode.png")
+nx, ny = obstacle.shape
+v_field = torch.zeros((2, nx, ny), device=device)
 
 """Simulation parameters"""
 # Diffusion coefficient
-d = 1e-1
-tau = 3 * d + 0.5  # Relaxation time
-omega = 1 / tau  # TODO: add independent omega for each species
-nx, ny = obstacle.shape  # Number of nodes in x and y directions
+omega_l = 1.8
+pe, dx, dt, d_l = convert_from_physical_params_diff(cell_size_ph, cell_size_ph, 0, d_ph, nx, omega_l)
+tau = 1 / omega_l
+j0_l = j0 / dx * cell_depth_ph  # A/lattice_site
+input("Press enter to start...")
 
 """Initialization"""
 # Initialize scalar field for species concentration
@@ -72,8 +77,8 @@ j_log = torch.empty(10000, dtype=torch.float64, device=device)
 
 def macroscopic():
     global rho_ox, rho_red, source_ox, source_red
-    rho_ox = torch.clamp(fin_ox.sum(0) + source_ox / 2, 1e-10, 10)
-    rho_red = torch.clamp(fin_red.sum(0) + source_red / 2, 1e-10, 10)
+    rho_ox = torch.clamp(fin_ox.sum(0) + source_ox / 2, 0, 10)
+    rho_red = torch.clamp(fin_red.sum(0) + source_red / 2, 0, 10)
 
 
 def stream(fin, fout):
@@ -139,18 +144,24 @@ def step(i):
 
     # Electrode BC
     # TODO: Use Tafel in logarithmic space to avoid instabilities
-    e_nernst = E_0 + (R * T) / (z * F) * torch.log(rho_red[electrode] / rho_ox[electrode])
+    e_nernst = E_0 - (R * T) / (z * F) * torch.log(rho_red[electrode] / rho_ox[electrode])
     # avoid large exponents in diffusion limited regime
-    exponent = torch.clamp(0.5 * (F / (R*T)) * (e[i] - e_nernst), -30, 30)
-    j = j0 * (rho_ox[electrode] * torch.exp(exponent) - rho_red[electrode] * torch.exp(-exponent))
+    exponent = (.5 * F / (R*T)) * (e[i] - e_nernst)
+    # Current in amps per site
+    j = j0_l * concentration_ph * (rho_ox[electrode] * torch.exp(exponent) - rho_red[electrode] * torch.exp(-exponent))
+    j = j / (dx * cell_depth_ph)
 
-    source_ox[electrode] = -j
-    source_red[electrode] = j
-    j_log[i] = torch.sum(j)  # Log current density
+    charge = j * dt  # Charge per site (C / site)
+    matter = charge / F  # substance created/consumed per site (mol / site)
+    matter_l = matter / concentration_ph  # substance in lattice units
+
+    source_ox[electrode] = matter_l
+    source_red[electrode] = -matter_l
+    j_log[i] = torch.sum(j) * (torch.sum(electrode) * dx * cell_depth_ph)  # Log current density
 
     # BGK collision
-    fout_ox = fin_ox - omega * (fin_ox - feq_ox) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_ox)
-    fout_red = fin_red - omega * (fin_red - feq_red) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_red)
+    fout_ox = fin_ox - omega_l * (fin_ox - feq_ox) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_ox)
+    fout_red = fin_red - omega_l * (fin_red - feq_red) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_red)
 
     # Bounce-back
     fout_ox[:, obstacle] = fin_ox[c_op][:, obstacle]
@@ -163,22 +174,29 @@ def step(i):
 
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
-    global rho_ox, rho_red, fin_ox, fin_red, fout_ox, fout_red, j_log, e
-    j_log = torch.zeros(iterations, dtype=torch.float64, device=device)
+    global rho_ox, rho_red, fin_ox, fin_red, fout_ox, fout_red, j_log, e, dt
 
+    print(f"Simulating {iterations * dt} seconds")
+
+    j_log = torch.zeros(iterations, dtype=torch.float64, device=device)
+    buffer_time = 400  # Buffer time for lbm stabilization
     # Set up electrode potential
-    t = np.linspace(0, 1, iterations)
-    phase_shift = 0.0397885 * np.pi  # 4 pi freq
-    # phase_shift = 0.099472 * np.pi  # 8 pi freq
-    signal = torch.from_numpy(sawtooth(4 * np.pi * (t + phase_shift), 0.5)).to(device)
-    max_e = 1.2
-    e = signal * (max_e / 2) * torch.ones(iterations, device=device) + 0.6
+    t = np.linspace(0, 1, iterations - buffer_time)
+    # phase_shift = 0.0397885 * np.pi  # 4 pi freq
+    phase_shift = 0.099472 * np.pi  # 8 pi freq
+    # phase_shift = np.pi * 0.0799  # 2 pi freq
+    signal = torch.from_numpy(sawtooth(8 * np.pi * (t + phase_shift), 0.5)).to(device)
+    max_e = 0.1 * E_0
+    e = signal * (max_e / 2) * torch.ones(iterations - buffer_time, device=device) + E_0
+    e = torch.cat((E_0 * torch.ones(buffer_time, device=device), e), dim=0)
     plt.plot(e.cpu().numpy())
     plt.ylabel("Potential (V)")
     plt.xlabel("Iteration")
     plt.grid()
     plt.show()
-    print(e[0])
+    plt.close()
+    # input("Continue?")
+    # print(e[0])
     if continue_last:  # Continue last computation
         rho_ox = torch.from_numpy(np.load("output/Electrochemical_last_rho_ox.npy")).to(device)
         rho_red = torch.from_numpy(np.load("output/Electrochemical_last_rho_red.npy")).to(device)
@@ -196,7 +214,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         t.start()
 
     # Run LBM for specified number of iterations
-    with alive_bar(iterations) as bar:
+    with alive_bar(iterations, force_tty=True) as bar:
         start = time.time()
         counter = 0
         for i in range(iterations):
@@ -221,10 +239,10 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     np.save(f"output/Electrochemical_last_rho_red.npy", rho_red.cpu().numpy())
 
     # Plot current density
-    fig, ax = plt.subplots()
-    ax.plot(e[500:].cpu(), j_log[500:].cpu().numpy())
     plt.show()
-    plt.close(fig)
+    fig, ax = plt.subplots()
+    ax.plot(e[buffer_time:].cpu().numpy(), j_log[buffer_time:].cpu().numpy())
+    plt.show()
 
     if save_to_disk:
         # Stop thread for saving data
@@ -243,8 +261,9 @@ def save_data(q: queue.Queue):
         plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=2)
         plt.colorbar()
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
+        plt.close()
 
 
 if __name__ == '__main__':
-    print(f"omega: {omega}")
-    run(6000, save_to_disk=True, interval=100, continue_last=False)
+    print(f"omega: {omega_l}")
+    run(1000, save_to_disk=True, interval=100, continue_last=False)

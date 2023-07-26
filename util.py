@@ -128,7 +128,7 @@ def convert_from_physical_params_ns(total_length_ph, channel_width_ph, char_velo
     dt = (1 / 3) * ((tau_l - 0.5) * dx ** 2) / viscosity_ph
     ulb = char_velocity_ph / (dx / dt)  # C_factor * lattice_velocity = physical_velocity
     assert np.abs(ulb - (re * nu_l / inlet_width_l)) < 1e-5
-    print("Simulation parameters:")
+    print("Simulation parameters (Navier-Stokes):")
     print(f"Re: {re}")
     print(f"dt: {dt}")
     print(f"dx: {dx}")
@@ -138,13 +138,22 @@ def convert_from_physical_params_ns(total_length_ph, channel_width_ph, char_velo
     return re, dx, dt, ulb
 
 
-# def convert_from_physical_params_diff(total_length_ph, channel_width_ph, char_velocity_ph, diffusion_coeff_ph,
-#                                     lattice_size, omega_l):
-#     pe = char_velocity_ph * channel_width_ph / diffusion_coeff_ph
-#     dx = total_length_ph / lattice_size
-#     inlet_width_l = channel_width_ph / dx
-#
-#     tau_l = 1 / omega_l
-#     nu_l = get_lattice_viscosity_from_tau_l(tau_l)
-#
-#     dt = (1 / 3) * ((tau_l - 0.5) * dx ** 2) / diffusion_coeff_ph
+def convert_from_physical_params_diff(total_length_ph, channel_width_ph, char_velocity_ph, diffusion_coeff_ph,
+                                      lattice_size, omega_l):
+    pe = char_velocity_ph * channel_width_ph / diffusion_coeff_ph
+    dx = total_length_ph / lattice_size
+    inlet_width_l = channel_width_ph / dx
+
+    tau_l = 1 / omega_l
+    dt = (1 / 3) * ((tau_l - 0.5) * dx ** 2) / diffusion_coeff_ph
+    u_l = char_velocity_ph / (dx / dt)
+    d_l = get_lattice_viscosity_from_tau_l(tau_l)
+
+    print("Simulation parameters (Diffusion):")
+    print(f"Pe: {pe}")
+    print(f"dt: {dt}")
+    print(f"dx: {dx}")
+    print(f"u_l: {u_l}")
+    print(f"omega_l: {omega_l}")
+    print(f"d_l: {d_l}")
+    return pe, dx, dt, d_l

@@ -5,7 +5,9 @@ from PIL import Image
 # Load the image
 # (Assuming it's a grayscale image where 0 is black and 255 is white)
 # If it's a different kind of binary image you might need to adjust
-image = np.array(Image.open("input/tortuosity/pdrop_001sig.png"))
+image = np.array(Image.open("input/pdrop/permeability_0.95_0.005.png"))
+
+image = image[2:-2, 2:-2]  # ignore borders
 
 image_array = (image == [0, 0, 0]).all(axis=2).T
 
@@ -28,3 +30,5 @@ for label in range(1, num_labels):  # we skip label 0 as it is the background
 average_size = np.mean(sizes)
 
 print("Average disc size (in pixels): ", average_size)
+average_radius = np.sqrt(average_size / np.pi)
+print(f"Average radius in pixels: {average_radius}")
