@@ -6,6 +6,9 @@ from numba import njit
 from concurrent.futures import ProcessPoolExecutor
 import matplotlib
 import joblib
+
+# Note: Emulate this script on terminal to avoid pickling errors with the multiprocessing module
+
 # use interactive backend for matplotlib
 matplotlib.use('TkAgg')
 plt.rcParams.update({
@@ -25,7 +28,7 @@ def calc_interface(final):
     interface = np.full_like(final, True)
     for x in range(1, final.shape[0] - 1):
         for y in range(1, final.shape[1] - 1):
-            tot = final[x - 1: x + 2, y - 1: y + 2]
+            tot = final[x - 1: x + 1, y - 1: y + 1]
             if tot.all() or not tot.any():
                 interface[x, y] = False
     return interface
@@ -60,12 +63,25 @@ def main():
     ax = fig.add_subplot(111, projection='3d')
     ax.set_ylabel(r'Standard Deviation $\sigma$')
     ax.set_xlabel(r'Porosity $\rho$')
-    ax.set_zlabel(r'Surface')
+    ax.set_zlabel(r'Normalized surface area')
     sfc /= np.max(sfc)
     surf = ax.plot_surface(X, Y, sfc, cmap=cmap)
-    # plt.show()
+
+    # line
+    x = 0.5
+    y = np.linspace(2.8, 40, 100)
+    z = 3 / y
+    # stack into array in the form of [[x, y, z], [x, y, z], ...]
+    line = np.stack((x * np.ones_like(y), y, z), axis=1)
+    ax.plot(line[:, 0], line[:, 1], line[:, 2], color='black', linewidth=2, linestyle='--',
+            label=r"$z(\sigma) = \frac{3}{\sigma}$", zorder=5)
     ax.azim = 30
     ax.elev = 10
+
+    # legend
+    ax.legend(loc='upper right', frameon=False, fontsize='x-large')
+    # plt.show()
+    # return
     plt.savefig('tortparam.png', dpi=900)
 
 

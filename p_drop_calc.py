@@ -14,10 +14,10 @@ from util import *
 
 """Simulation parameters"""
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/pdrop/pdrop3_45deg4.png')
+obstacle = generate_obstacle_tensor('input/permeability/rho 0_75 sig 0_01.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-re = 10  # Reynolds number
+re = 20  # Reynolds number
 ulb = 0.001  # characteristic velocity (inlet)
 nulb = ulb * ny / re  # kinematic viscosity
 print("nulb:", nulb)
@@ -172,10 +172,11 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 
 if __name__ == '__main__':
+    print(f"Device: {device}")
     print(f"omega: {omega}")
-    iterations = 20000
+    iterations = 25000
     ddp = torch.zeros(iterations, device=device)  # Keep track of pressure drop evolution
-    run(iterations, save_to_disk=False, interval=1000, continue_last=False)
+    run(iterations, save_to_disk=True, interval=1000, continue_last=False)
 
     plt.clf()
     plt.plot(np.arange(iterations), ddp.cpu().numpy(), label="Pressure drop")  # Plot pressure drop evolution

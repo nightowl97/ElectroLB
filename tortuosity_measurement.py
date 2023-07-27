@@ -4,8 +4,8 @@ from scipy.linalg import norm
 from scipy.interpolate import RegularGridInterpolator
 from util import *
 
-v = np.load("output/BaseLattice_last_u.npy")
-obstacle = generate_obstacle_tensor("input/tortuosity/pdrop_10sig.png").cpu().numpy()
+v = np.load("output/PdropLattice_last_u.npy")
+obstacle = generate_obstacle_tensor("input/permeability/rho 0_75 sig 0_01.png").cpu().numpy()
 left_margin = 10
 v[:, obstacle] = 0
 U = v[0]
@@ -73,9 +73,21 @@ for path in paths:
     ax.plot(np.asarray(path)[:, 0], np.asarray(path)[:, 1], 'r--', linewidth=0.2)
 
 plt.imshow(np.invert(obstacle.T), cmap='gray')
-plt.savefig("output/Streamlines_pdrop_10sig.png", dpi=1200)
+plt.savefig("output/Streamlines_rho_0_75_sig_0_01.png", dpi=1200)
 
 lengths = np.asarray(lengths)
 tortuosity = np.mean(lengths) / (v.shape[1] - left_margin - 1)  # -1 for right margin
 
 print(f"Measured Tortuosity: {tortuosity}")
+
+# flux averaged streamlines tortuosity
+# calculate average module of velocity, excluding obstacle
+v_pores = v[:, ~obstacle]
+v_pores_module = np.sqrt(v_pores[0] ** 2 + v_pores[1] ** 2)
+# average velocity in pores
+v_mean = np.mean(v_pores_module)
+# average x component of velocity
+v_x_mean = np.mean(v_pores[0])
+
+flux_avg_tortuosity = v_mean / v_x_mean
+print(f"Flux averaged tortuosity: {flux_avg_tortuosity}")
