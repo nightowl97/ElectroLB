@@ -19,7 +19,7 @@ concentration_ph = 100  # mol/m^3 or 0.1M
 z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
 d_ph = 0.76e-7  # m^2/s Diffusion coefficient (Bard page 1013)
-j0 = 1e-8  # Exchange current density in A/m^2
+j0 = 1e-1  # Exchange current density in A/m^2
 
 electrode = generate_electrode_tensor("input/echem_cells/planar_electrode.png")
 obstacle = generate_obstacle_tensor("input/echem_cells/planar_electrode.png")
@@ -148,16 +148,16 @@ def step(i):
     # avoid large exponents in diffusion limited regime
     exponent = (.5 * F / (R*T)) * (e[i] - e_nernst)
     # Current in amps per site
-    j = j0_l * concentration_ph * (rho_ox[electrode] * torch.exp(exponent) - rho_red[electrode] * torch.exp(-exponent))
-    j = j / (dx * cell_depth_ph)
+    j = j0 * concentration_ph * (rho_ox[electrode] * torch.exp(exponent) - rho_red[electrode] * torch.exp(-exponent))
+    current = j * (dx * cell_depth_ph)
 
-    charge = j * dt  # Charge per site (C / site)
+    charge = current * dt  # Charge per site (C / site)
     matter = charge / F  # substance created/consumed per site (mol / site)
     matter_l = matter / concentration_ph  # substance in lattice units
 
     source_ox[electrode] = matter_l
     source_red[electrode] = -matter_l
-    j_log[i] = torch.sum(j) * (torch.sum(electrode) * dx * cell_depth_ph)  # Log current density
+    j_log[i] = torch.sum(matter)  # Log current density
 
     # BGK collision
     fout_ox = fin_ox - omega_l * (fin_ox - feq_ox) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_ox)
@@ -186,7 +186,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     phase_shift = 0.099472 * np.pi  # 8 pi freq
     # phase_shift = np.pi * 0.0799  # 2 pi freq
     signal = torch.from_numpy(sawtooth(8 * np.pi * (t + phase_shift), 0.5)).to(device)
-    max_e = 0.1 * E_0
+    max_e = 3.9 * E_0
     e = signal * (max_e / 2) * torch.ones(iterations - buffer_time, device=device) + E_0
     e = torch.cat((E_0 * torch.ones(buffer_time, device=device), e), dim=0)
     plt.plot(e.cpu().numpy())
@@ -231,7 +231,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 counter = 0
 
             counter += 1
-            bar.text(f"MLUPS: {mlups:.2f} | Total density {rho_ox.mean().cpu().numpy():.5f} | Potential {e[i]:.5f}")
+            bar.text(f"MLUPS: {mlups:.2f} | Electrode density {rho_ox[electrode].mean().cpu().numpy():.5f} | Potential {e[i]:.5f}")
             bar()
 
     # Save final data to numpy files
@@ -266,4 +266,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == '__main__':
     print(f"omega: {omega_l}")
-    run(1000, save_to_disk=True, interval=100, continue_last=False)
+    run(4000, save_to_disk=True, interval=50, continue_last=False)

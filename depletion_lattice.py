@@ -12,7 +12,7 @@ import numpy as np
 cell_length_ph = 5e-2  # 2.5cm or 0.025m
 channel_width_ph = 5e-3  # 5mm or 0.005m
 depth_ph = 5e-3  # 5mm
-diff_ph = 0.76e-7  # m^2/s (From Allen , Bard appendix for Ferrocyanide, page 831)
+diff_ph = 0.76e-9  # m^2/s (From Allen , Bard appendix for Ferrocyanide, page 831)
 vel_ph = 0.01  # m/s
 Pe = vel_ph * channel_width_ph / diff_ph  # Peclet number
 concentration_ph = 100  # mol/m^3 ~ 0.1M
@@ -22,7 +22,7 @@ input_image = "input/mmrfbs/MMRFB_v1.png"
 obstacle = generate_obstacle_tensor(input_image)
 electrode1 = generate_electrode_tensor(input_image, BLUE)
 # TODO: properly treat velocity (should be below 0.1)
-v_field = torch.from_numpy(np.load("output/BaseLattice_last_u.npy"))
+v_field = torch.from_numpy(np.load("input/mmrfb_u.npy"))
 v_field = v_field.to(device)
 
 # Electrode lengths for current densities
@@ -35,7 +35,7 @@ inlet_top = generate_electrode_tensor(input_image, YELLOW)
 
 # Diffusion constant
 nx, ny = obstacle.shape
-omega_l = 1.8
+omega_l = 1.995
 re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, channel_width_ph, vel_ph, diff_ph, nx, omega_l)
 input("Press enter to continue...")
 v_field = v_field / torch.max(v_field) * ulb
@@ -181,4 +181,4 @@ def save_data(q: queue.Queue):
 
 
 if __name__ == "__main__":
-    run(5000, save_to_disk=True, interval=100, continue_last=True)
+    run(5000, save_to_disk=True, interval=1000, continue_last=False)

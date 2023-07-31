@@ -20,7 +20,7 @@ cell_length_ph = 3e-2  # 3cm
 obstacle = generate_obstacle_tensor('input/mmrfbs/MMRFB_v1.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-omega_l = 1
+omega_l = 0.92
 
 re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, inlet_width_ph, u_ph, visc_ph, nx, omega_l)
 input("Press enter to continue...")
@@ -186,5 +186,5 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(20000, save_to_disk=True, interval=100, continue_last=True)
+    run(100000, save_to_disk=True, interval=100, continue_last=True)
 
