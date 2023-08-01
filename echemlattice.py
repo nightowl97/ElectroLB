@@ -9,7 +9,17 @@ from alive_progress import alive_bar
 import time
 from scipy.signal import sawtooth
 
-# Solves the convective-diffusion equation for a species in an electrochemical system and performs cyclic voltametry
+"""
+Solves the convective-diffusion equation for a species in an electrochemical system and performs cyclic voltammetry
+
+# Converting from physical to lattice units we dx_l = 1, dt_l = 1, rho_l = 1, therefore our conversion factors are:
+C_rho = concetration_ph
+C_t = dt
+C_length = dx
+in order to convert between two systems we use
+physical_quantity = lattice_quantity * C_quantity (Kruger page 272)
+for example the conversion factor for velocity C_u is C_length / C_t = dx / dt
+"""
 
 # Physical constants
 cell_size_ph = 5e-2  # 5cm or 0.05m
@@ -18,8 +28,8 @@ concentration_ph = 100  # mol/m^3 or 0.1M
 
 z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
-d_ph = 0.76e-7  # m^2/s Diffusion coefficient (Bard page 1013)
-j0 = 1e-1  # Exchange current density in A/m^2
+d_ph = 0.76e-9  # m^2/s Diffusion coefficient (Bard page 1013)
+j0 = 0.01  # Exchange current density in A/m^2
 
 electrode = generate_electrode_tensor("input/echem_cells/planar_electrode.png")
 obstacle = generate_obstacle_tensor("input/echem_cells/planar_electrode.png")
@@ -31,7 +41,7 @@ v_field = torch.zeros((2, nx, ny), device=device)
 omega_l = 1.8
 pe, dx, dt, d_l = convert_from_physical_params_diff(cell_size_ph, cell_size_ph, 0, d_ph, nx, omega_l)
 tau = 1 / omega_l
-j0_l = j0 / dx * cell_depth_ph  # A/lattice_site
+# j0_l = j0 / dx * cell_depth_ph  # A/lattice_site
 input("Press enter to start...")
 
 """Initialization"""
@@ -144,20 +154,25 @@ def step(i):
 
     # Electrode BC
     # TODO: Use Tafel in logarithmic space to avoid instabilities
-    e_nernst = E_0 - (R * T) / (z * F) * torch.log(rho_red[electrode] / rho_ox[electrode])
-    # avoid large exponents in diffusion limited regime
-    exponent = (.5 * F / (R*T)) * (e[i] - e_nernst)
-    # Current in amps per site
+    e_nernst = torch.mean(E_0 + (R * T) / (z * F) * torch.log(torch.mean(rho_red[electrode]) /
+                                                              torch.mean(rho_ox[electrode])), dtype=torch.float64)
+    # avoid large exponents
+    exponent = (.5 * F / (R * T)) * (e[i] - e_nernst)
+    # Current density in amps per m^2
     j = j0 * concentration_ph * (rho_ox[electrode] * torch.exp(exponent) - rho_red[electrode] * torch.exp(-exponent))
-    current = j * (dx * cell_depth_ph)
+    # current in amps per lbm box
+    current = torch.nan_to_num(j * dx * cell_depth_ph, nan=0.0)
 
     charge = current * dt  # Charge per site (C / site)
-    matter = charge / F  # substance created/consumed per site (mol / site)
-    matter_l = matter / concentration_ph  # substance in lattice units
+    matter = charge / (z * F)  # substance created/consumed per site (mol / site)
+    c_ph = matter / (dx**2 * cell_depth_ph)  # substance in mol per lattice site
+    # substance in lattice units source_ph = C x source_lattice where C is C_rho / C_t
+    # Source term units are mol litre^-1 s^-1
+    c_l = c_ph * dt / concentration_ph
 
-    source_ox[electrode] = matter_l
-    source_red[electrode] = -matter_l
-    j_log[i] = torch.sum(matter)  # Log current density
+    source_ox[electrode] = -c_l
+    source_red[electrode] = c_l
+    j_log[i] = torch.sum(current)  # Log current density
 
     # BGK collision
     fout_ox = fin_ox - omega_l * (fin_ox - feq_ox) + (1 - 1 / (2 * tau)) * torch.einsum('i,jk->ijk', w, source_ox)
@@ -186,7 +201,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     phase_shift = 0.099472 * np.pi  # 8 pi freq
     # phase_shift = np.pi * 0.0799  # 2 pi freq
     signal = torch.from_numpy(sawtooth(8 * np.pi * (t + phase_shift), 0.5)).to(device)
-    max_e = 3.9 * E_0
+    max_e = 1.4 * E_0
     e = signal * (max_e / 2) * torch.ones(iterations - buffer_time, device=device) + E_0
     e = torch.cat((E_0 * torch.ones(buffer_time, device=device), e), dim=0)
     plt.plot(e.cpu().numpy())
@@ -231,7 +246,8 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 counter = 0
 
             counter += 1
-            bar.text(f"MLUPS: {mlups:.2f} | Electrode density {rho_ox[electrode].mean().cpu().numpy():.5f} | Potential {e[i]:.5f}")
+            bar.text(f"MLUPS: {mlups:.2f} | Electrode density {rho_ox[electrode].mean().cpu().numpy():.5f} | "
+                     f"Potential {e[i]:.5f} | Nernst Potential {torch.mean(e_nernst).cpu().numpy():.3f}")
             bar()
 
     # Save final data to numpy files
@@ -266,4 +282,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == '__main__':
     print(f"omega: {omega_l}")
-    run(4000, save_to_disk=True, interval=50, continue_last=False)
+    run(4000, save_to_disk=True, interval=100, continue_last=False)

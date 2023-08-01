@@ -18,7 +18,8 @@ YELLOW = np.asarray([255, 255, 0])
 CYAN = np.asarray([0, 255, 255])
 MAGENTA = np.asarray([255, 0, 255])
 
-device = torch.device("cpu")
+device = torch.device("cuda" if torch.cuda.is_available() else "cpu")
+print(f"using device: {device}")
 
 cmap = plt.get_cmap('coolwarm')
 cmap.set_bad((0, 0, 0, 1))
