@@ -29,7 +29,8 @@ concentration_ph = 100  # mol/m^3 or 0.1M
 z = 1  # Number of electrons transferred
 E_0 = 0.6  # Standard potential
 d_ph = 0.76e-9  # m^2/s Diffusion coefficient (Bard page 1013)
-j0 = 0.01  # Exchange current density in A/m^2
+j_0 = 10  # Exchange current density in A/m^2
+j_0_ph = 5 * 10000  # A/m2 from lvov page 129 for FerriFerro
 
 electrode = generate_electrode_tensor("input/echem_cells/planar_electrode.png")
 obstacle = generate_obstacle_tensor("input/echem_cells/planar_electrode.png")
@@ -38,7 +39,7 @@ v_field = torch.zeros((2, nx, ny), device=device)
 
 """Simulation parameters"""
 # Diffusion coefficient
-omega_l = 1.8
+omega_l = 1.98
 pe, dx, dt, d_l = convert_from_physical_params_diff(cell_size_ph, cell_size_ph, 0, d_ph, nx, omega_l)
 tau = 1 / omega_l
 # j0_l = j0 / dx * cell_depth_ph  # A/lattice_site
@@ -87,8 +88,10 @@ j_log = torch.empty(10000, dtype=torch.float64, device=device)
 
 def macroscopic():
     global rho_ox, rho_red, source_ox, source_red
-    rho_ox = torch.clamp(fin_ox.sum(0) + source_ox / 2, 0, 10)
-    rho_red = torch.clamp(fin_red.sum(0) + source_red / 2, 0, 10)
+    # rho_ox = torch.clamp(fin_ox.sum(0) + source_ox / 2, 0, 2)
+    rho_ox = fin_ox.sum(0) + source_ox / 2
+    # rho_red = torch.clamp(fin_red.sum(0) + source_red / 2, 0, 2)
+    rho_red = fin_red.sum(0) + source_red / 2
 
 
 def stream(fin, fout):
@@ -132,7 +135,7 @@ def stream(fin, fout):
     fin[0, :, :] = fout[0, :, :]  # vel 0 is stationary (dont act like you didn't forget this for 2 hours)
 
 
-def step(i):
+def step(i, rho_ox_log, src_log):
     global fin_ox, fin_red, fout_ox, fout_red, source_ox, source_red, rho_ox, rho_red, e_nernst, j, e
     # Perform one LBM step
     # Outlet BC
@@ -141,6 +144,7 @@ def step(i):
     fin_red[left_col, -1, :] = fin_red[left_col, -2, :]
 
     macroscopic()
+    rho_ox_log[i] = torch.mean(rho_ox[electrode])
 
     # Inlet BC
     rho_ox[:, ny - 2] = 1  # Inlet concentration
@@ -151,27 +155,34 @@ def step(i):
     # Zhou He BC
     fin_ox[right_col, 0, :] = feq_ox[right_col, 0, :] + fin_ox[left_col, 0, :] - feq_ox[left_col, 0, :]
     fin_red[right_col, 0, :] = feq_red[right_col, 0, :] + fin_red[left_col, 0, :] - feq_red[left_col, 0, :]
-
+    if i == 2900:
+        print("reached peak")
     # Electrode BC
     # TODO: Use Tafel in logarithmic space to avoid instabilities
-    e_nernst = torch.mean(E_0 + (R * T) / (z * F) * torch.log(torch.mean(rho_red[electrode]) /
-                                                              torch.mean(rho_ox[electrode])), dtype=torch.float64)
+    e_nernst = E_0 - (R * T) / (z * F) * torch.log(torch.mean(rho_red[electrode]) / torch.mean(rho_ox[electrode]))
+    # e_nernst = torch.tensor(E_0, device=device)
     # avoid large exponents
     exponent = (.5 * F / (R * T)) * (e[i] - e_nernst)
-    # Current density in amps per m^2
-    j = j0 * concentration_ph * (rho_ox[electrode] * torch.exp(exponent) - rho_red[electrode] * torch.exp(-exponent))
+    # Current density in amps per m^2 in each lbm box
+    j = j_0 * concentration_ph * (torch.mean(rho_ox[electrode]) ** .5) * (torch.mean(rho_red[electrode]) ** .5) * \
+        (torch.exp(exponent) - torch.exp(-exponent))
     # current in amps per lbm box
     current = torch.nan_to_num(j * dx * cell_depth_ph, nan=0.0)
 
     charge = current * dt  # Charge per site (C / site)
     matter = charge / (z * F)  # substance created/consumed per site (mol / site)
-    c_ph = matter / (dx**2 * cell_depth_ph)  # substance in mol per lattice site
+    c_ph = matter / (dx**2 * cell_depth_ph)  # substance in mol per lbm box
     # substance in lattice units source_ph = C x source_lattice where C is C_rho / C_t
     # Source term units are mol litre^-1 s^-1
     c_l = c_ph * dt / concentration_ph
+    # c_l[c_l > rho_ox[electrode]] = 1 * rho_ox[electrode][c_l > rho_ox[electrode]]
+    # c_l[-c_l > rho_red[electrode]] = -1 * rho_red[electrode][-c_l > rho_red[electrode]]
 
-    source_ox[electrode] = -c_l
-    source_red[electrode] = c_l
+    # current = c_l * (concentration_ph * dx**2 * cell_depth_ph * z * F) / (dt**2)
+    src_log[i] = torch.mean(c_l)
+
+    source_ox[electrode] = c_l
+    source_red[electrode] = -c_l
     j_log[i] = torch.sum(current)  # Log current density
 
     # BGK collision
@@ -194,13 +205,16 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     print(f"Simulating {iterations * dt} seconds")
 
     j_log = torch.zeros(iterations, dtype=torch.float64, device=device)
+    rho_ox_log = torch.zeros(iterations, dtype=torch.float64, device=device)
+    src_log = torch.zeros(iterations, dtype=torch.float64, device=device)
+
     buffer_time = 400  # Buffer time for lbm stabilization
     # Set up electrode potential
     t = np.linspace(0, 1, iterations - buffer_time)
     # phase_shift = 0.0397885 * np.pi  # 4 pi freq
-    phase_shift = 0.099472 * np.pi  # 8 pi freq
-    # phase_shift = np.pi * 0.0799  # 2 pi freq
-    signal = torch.from_numpy(sawtooth(8 * np.pi * (t + phase_shift), 0.5)).to(device)
+    # phase_shift = 0.099472 * np.pi  # 8 pi fre
+    phase_shift = np.pi * 0.0799  # 2 pi freq
+    signal = torch.from_numpy(sawtooth(2 * np.pi * (t + phase_shift), 0.5)).to(device)
     max_e = 1.4 * E_0
     e = signal * (max_e / 2) * torch.ones(iterations - buffer_time, device=device) + E_0
     e = torch.cat((E_0 * torch.ones(buffer_time, device=device), e), dim=0)
@@ -210,6 +224,9 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     plt.grid()
     plt.show()
     plt.close()
+    scan_rate = torch.abs((e[-2] - e[-1]) / dt)
+    print(f"CV Scan rate is: {scan_rate * 1000:.3f}mV/s")
+    input("Continue..")
     # input("Continue?")
     # print(e[0])
     if continue_last:  # Continue last computation
@@ -233,14 +250,14 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
         start = time.time()
         counter = 0
         for i in range(iterations):
-            step(i)  # Perform one LBM step
+            step(i, rho_ox_log, src_log)  # Perform one LBM step
             if i % interval == 0:
                 # Calculate MLUPS by dividing number of nodes by time in seconds
-                dt = time.time() - start
-                mlups = nx * ny * counter / (dt * 1e6)
+                delta_t = time.time() - start
+                mlups = nx * ny * counter / (delta_t * 1e6)
                 if save_to_disk:
                     # push data to queue
-                    q.put((rho_ox, f"output/{i // interval:05}.png"))  # Five digit filename
+                    q.put((rho_ox.detach().clone(), f"output/{i // interval:05}.png"))  # Five digit filename
                 # Reset timer and counter
                 start = time.time()
                 counter = 0
@@ -282,4 +299,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == '__main__':
     print(f"omega: {omega_l}")
-    run(4000, save_to_disk=True, interval=100, continue_last=False)
+    run(2 * 4963, save_to_disk=True, interval=100, continue_last=False)
