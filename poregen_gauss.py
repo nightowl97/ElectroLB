@@ -12,7 +12,7 @@ cmap = matplotlib.colormaps['Greys']
 display_interface = False  # Colors Electrodes sfc in blue for identification in LBM obstacle
 
 nx, ny = 299, 299  # domain dimensions
-target_rho = 0.95
+target_rho = 0.8
 
 
 # Custom gaussian kernel with multivariate normal distribution and custom covariance matrix
@@ -49,7 +49,7 @@ cov = np.asarray([[1, 0],
                   [0, 1]])  # Covariance matrix
 
 # Generate the kernel
-kernel = gaussian_kernel(size, mean, .01 * cov, angle=0)
+kernel = gaussian_kernel(size, mean, .1 * cov, angle=torch.pi / 2)
 
 plt.imshow(kernel, interpolation='none')
 plt.axis('off')
@@ -75,25 +75,25 @@ print(f'Porosity: {1 - np.sum(final) / (nx * ny)}')
 # plt.savefig(f'output/electrode.png', bbox_inches='tight', pad_inches=0, dpi=800)
 # plt.show()
 
-# interface = np.full_like(final, False)
+interface = np.full_like(final, False)
 # # identify interface
-# print("Finding interface..")
-# for i in range(1, nx - 1):
-#     for j in range(1, ny - 1):
-#         neighborhood = final[i - 1: i + 1, j - 1: j + 1]
-#         if not (neighborhood.all() or not neighborhood.any()):
-#             interface[i, j] = True
+print("Finding interface..")
+for i in range(1, nx - 1):
+    for j in range(1, ny - 1):
+        neighborhood = final[i - 1: i + 1, j - 1: j + 1]
+        if not (neighborhood.all() or not neighborhood.any()):
+            interface[i, j] = True
 
 # Obstacles on Boundaries are considered electrode surface
-# interface[0, final[0]] = True
-# interface[-1, final[-1]] = True
+interface[0, final[0]] = True
+interface[-1, final[-1]] = True
 # interface[final[:, 0], 0] = True
 # interface[final[:, -1], -1] = True
 
 print("Drawing Image..")
 rgb_array = 255 * np.ones((nx, ny, 3))
 rgb_array[final, :] = np.asarray(BLACK)
-# rgb_array[interface, :] = np.asarray(BLUE)
+rgb_array[interface, :] = np.asarray(BLUE)
 image = Image.fromarray(rgb_array.transpose(1, 0, 2).astype(np.uint8), mode='RGB')
 image.save(f'output/temp.png')
 print("Done.")

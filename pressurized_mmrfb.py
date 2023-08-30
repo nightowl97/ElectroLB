@@ -17,10 +17,10 @@ re_ph = u_ph * inlet_width_ph / visc_ph  # Reynolds number
 cell_length_ph = 3e-2  # 3cm
 
 # Create obstacle tensor from numpy array
-obstacle = generate_obstacle_tensor('input/mmrfbs/MMRFB_v1.png')
+obstacle = generate_obstacle_tensor('input/mmrfbs/MMRFB_por_0.7_hor.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-omega_l = 0.92
+omega_l = 1.1
 
 re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, inlet_width_ph, u_ph, visc_ph, nx, omega_l)
 input("Press enter to continue...")
@@ -37,6 +37,8 @@ def equilibrium():
 # Initialize macroscopic variables
 rho = torch.ones((nx, ny), device=device).float()
 u = torch.zeros((2, nx, ny), device=device).float()
+last_u = torch.zeros((2, nx, ny), device=device).float()
+du = []
 
 # Initialize populations
 feq = torch.zeros((9, nx, ny), device=device).float()
@@ -94,13 +96,15 @@ def stream():
 
 
 def step():
-    global fin, fout, rho, u
+    global fin, fout, rho, u, last_u, du
     # Perform one LBM step
     # Outlet BC
     # Doing this first is more stable for some reason
     fin[left_col, -1, :] = fin[left_col, -2, :]
 
     macroscopic()  # Calculate macroscopic variables
+    du.append(torch.norm(u - last_u).cpu().item())
+    last_u = u.clone()
     # Impose conditions on macroscopic variables
     u[1, :, 0] = ulb * torch.ones(nx, device=device).float()
     u[1, :, -1] = - ulb * torch.ones(nx, device=device).float()
@@ -171,12 +175,15 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 counter = 0
 
             counter += 1
-            bar.text(f"MLUPS: {mlups:.2f}\t |")
+            bar.text(f"MLUPS: {mlups:.2f}\t | du: {du[-1]:.5e}")
             bar()
 
     # Save final data to numpy files
     np.save(f"output/BaseLattice_last_u.npy", u.cpu().numpy())
     np.save(f"output/BaseLattice_last_rho.npy", rho.cpu().numpy())
+    fig, ax = plt.subplots()
+    ax.semilogy(np.asarray(du[2:]))
+    plt.show()
 
     if save_to_disk:
         # Stop thread for saving data
@@ -186,5 +193,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(100000, save_to_disk=True, interval=100, continue_last=True)
-
+    run(90000, save_to_disk=True, interval=1000, continue_last=False)

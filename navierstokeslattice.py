@@ -187,4 +187,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(20000, save_to_disk=True, interval=100, continue_last=False)
+    run(40000, save_to_disk=True, interval=1000, continue_last=False)
