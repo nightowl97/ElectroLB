@@ -74,7 +74,7 @@ def main():
     # stack into array in the form of [[x, y, z], [x, y, z], ...]
     line = np.stack((x * np.ones_like(y), y, z), axis=1)
     ax.plot(line[:, 0], line[:, 1], line[:, 2], color='black', linewidth=2, linestyle='--',
-            label=r"$z(\sigma) = \frac{3}{\sigma}$", zorder=5)
+            label=r"$z(\sigma) = \frac{C}{\sigma}$", zorder=5)
     ax.azim = 30
     ax.elev = 10
 
@@ -82,7 +82,8 @@ def main():
     ax.legend(loc='upper right', frameon=False, fontsize='x-large')
     # plt.show()
     # return
-    plt.savefig('tortparam.png', dpi=900)
+    # No margins around the plot
+    plt.savefig("tortparam.png", dpi=900, bbox_inches='tight', pad_inches=0.0)
 
 
 if __name__ == '__main__':

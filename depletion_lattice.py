@@ -36,7 +36,7 @@ inlet_top = generate_electrode_tensor(input_image, YELLOW)
 
 # Diffusion constant
 nx, ny = obstacle.shape
-omega_l = 1.999
+omega_l = 1.9
 re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, channel_width_ph, vel_ph, diff_ph, nx, omega_l)
 input("Press enter to continue...")
 v_field = v_field / torch.max(v_field) * ulb
@@ -112,9 +112,9 @@ def step(i):
     rho_ox_1[electrode1] = 0
     rho_ox_1[obstacle] = 0
 
-    outlet_c = torch.sum(rho_ox_1[2755, ny//2:1400])
+    # outlet_c = torch.sum(rho_ox_1[2755, ny//2:1400])
     # outlet_c = torch.sum(rho_ox_1[366, ny//2:188])
-    outlet_hist.append(outlet_c.cpu().numpy())
+    # outlet_hist.append(outlet_c.cpu().numpy())
 
     equilibrium()
 
@@ -167,9 +167,9 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
     # save final state
     np.save(f"output/Depletion_last_rho_ox_1.npy", rho_ox_1.cpu().numpy())
-    fig, ax = plt.subplots()
-    ax.plot(np.asarray(outlet_hist[2:]))
-    plt.show()
+    # fig, ax = plt.subplots()
+    # ax.plot(np.asarray(outlet_hist[2:]))
+    # plt.show()
 
     if save_to_disk:
         q.put((None, None))
