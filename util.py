@@ -160,10 +160,8 @@ def convert_from_physical_params_diff(total_length_ph, channel_width_ph, char_ve
     return pe, dx, dt, d_l
 
 
-def convert_from_physical_params_pure_diff(total_length_ph, channel_width_ph, diffusion_coeff_ph,
-                                           lattice_size, omega_l):
+def convert_from_physical_params_pure_diff(total_length_ph, diffusion_coeff_ph, lattice_size, omega_l):
     dx = total_length_ph / lattice_size
-    inlet_width_l = channel_width_ph / dx
 
     tau_l = 1 / omega_l
     dt = (1 / 3) * ((tau_l - 0.5) * dx ** 2) / diffusion_coeff_ph
