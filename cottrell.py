@@ -27,11 +27,11 @@ cell_depth_ph = 2e-3  # 2mm or 0.002m
 concentration_ph = 100  # mol/m^3 or 0.1M
 
 z = 1  # Number of electrons transferred
-d_ph = 0.76e-9  # m^2/s Diffusion coefficient (Bard page 813)
+d_ph = 0.76e-7  # m^2/s Diffusion coefficient (Bard page 813)
 
 
-electrode = generate_electrode_tensor("input/cottrell_xlarge.png")
-obstacle = generate_obstacle_tensor("input/cottrell_xlarge.png")
+electrode = generate_electrode_tensor("input/cottrell.png")
+obstacle = generate_obstacle_tensor("input/cottrell.png")
 nx, ny = obstacle.shape
 
 """Simulation parameters"""
@@ -200,7 +200,7 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
                 mlups = nx * ny * counter / (delta_t * 1e6)
                 if save_to_disk:
                     # push data to queue
-                    q.put((rho_ox.detach().clone(), f"output/{i // interval:05}.png"))  # Five digit filename
+                    q.put((rho_red.detach().clone(), f"output/{i // interval:05}.png"))  # Five digit filename
                 # Reset timer and counter
                 start = time.time()
                 counter = 0
@@ -219,11 +219,20 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     area = electrode.sum() * dx * cell_depth_ph  # Electrode area (only works with planar electrodes)
     ph_time = np.arange(1, iterations) * dt
     cott = (F * float(area.cpu()) * concentration_ph * np.sqrt(d_ph)) / (np.sqrt(np.pi * ph_time))
-    ax.semilogy(ph_time, j_log[1:].cpu().numpy(), "gx", label="LBM")
-    ax.semilogy(ph_time, cott, label="Cottrell")
+    ax.plot(ph_time, j_log[:-1].cpu().numpy(), "gs", label="LBM", markersize=3)
+    ax.plot(ph_time, cott, "r--", label="Cottrell")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Current (A)")
     ax.legend()
+    # plt.savefig("output/cottrell_current_lin.png", bbox_inches='tight', pad_inches=0, dpi=900)
+    plt.show()
+    fig, ax = plt.subplots()
+    rel_err = j_log[:-1].cpu().numpy() / cott
+    ax.plot(ph_time, rel_err, '-g')
+    ax.set_xlabel("Time (s)")
+    ax.set_ylabel("$I / I_{Cottrell}$")
+    ax.grid()
+    # ax.set_ylim(0.8, 2.5)
     plt.show()
 
     if save_to_disk:
@@ -240,7 +249,7 @@ def save_data(q: queue.Queue):
         plt.clf()
         plt.axis('off')
         data[obstacle] = np.nan
-        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=2)
+        plt.imshow(data.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1)
         plt.colorbar()
         plt.savefig(filename, bbox_inches='tight', pad_inches=0, dpi=500)
         plt.close()
@@ -248,4 +257,4 @@ def save_data(q: queue.Queue):
 
 if __name__ == '__main__':
     print(f"omega: {omega_l}")
-    run(3000, save_to_disk=True, interval=100, continue_last=False)
+    run(100, save_to_disk=True, interval=10, continue_last=False)
