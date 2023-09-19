@@ -27,16 +27,16 @@ cell_depth_ph = 2e-3  # 2mm or 0.002m
 concentration_ph = 100  # mol/m^3 or 0.1M
 
 z = 1  # Number of electrons transferred
-d_ph = 0.76e-7  # m^2/s Diffusion coefficient (Bard page 813)
+d_ph = 0.76e-9  # m^2/s Diffusion coefficient (Bard page 813)
 
 
-electrode = generate_electrode_tensor("input/cottrell.png")
-obstacle = generate_obstacle_tensor("input/cottrell.png")
+electrode = generate_electrode_tensor("input/cottrell_xlarge.png")
+obstacle = generate_obstacle_tensor("input/cottrell_xlarge.png")
 nx, ny = obstacle.shape
 
 """Simulation parameters"""
 # Diffusion coefficient
-omega_l = 1.
+omega_l = 1
 fo, dx, dt, d_l = convert_from_physical_params_pure_diff(cell_size_ph, d_ph, nx, omega_l)
 tau = 1 / omega_l
 j_log = torch.zeros(1, dtype=torch.float64, device=device)
@@ -133,16 +133,18 @@ def step(i):
 
     macroscopic()
 
-    # Calculate generated current
-    # Charge
-    q = F * (rho_red[electrode] * concentration_ph) * (dx ** 2) * cell_depth_ph
-    total_q = q.sum()
-    # Current
-    j_log[i] = total_q / dt
+    delay = 1000
+    if i > delay:
+        # Calculate generated current
+        # Charge
+        q = F * (rho_red[electrode] * concentration_ph) * (dx ** 2) * cell_depth_ph
+        total_q = q.sum()
+        # Current
+        j_log[i - delay] = total_q / dt
 
-    # Electrode BC
-    rho_ox[electrode] = 1
-    rho_red[electrode] = 0
+        # Electrode BC
+        rho_ox[electrode] = 1
+        rho_red[electrode] = 0
     equilibrium()
 
     # Zhou He BC
@@ -218,22 +220,24 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     fig, ax = plt.subplots()
     area = electrode.sum() * dx * cell_depth_ph  # Electrode area (only works with planar electrodes)
     ph_time = np.arange(1, iterations) * dt
-    cott = (F * float(area.cpu()) * concentration_ph * np.sqrt(d_ph)) / (np.sqrt(np.pi * ph_time))
-    ax.plot(ph_time, j_log[:-1].cpu().numpy(), "gs", label="LBM", markersize=3)
-    ax.plot(ph_time, cott, "r--", label="Cottrell")
+    cot_time = np.linspace(dt / 20, iterations * dt * 1.1, 1000)
+    cott = (F * float(area.cpu()) * concentration_ph * np.sqrt(d_ph)) / (np.sqrt(np.pi * cot_time))
+    indices = get_indices_to_keep(iterations - 1, start_fine=0.005)
+    ax.semilogy(ph_time[indices], j_log[:-1].cpu().numpy()[indices], "g^", label="LBM", markersize=3)
+    ax.semilogy(cot_time, cott, "r--", label="Cottrell")
     ax.set_xlabel("Time (s)")
     ax.set_ylabel("Current (A)")
     ax.legend()
-    # plt.savefig("output/cottrell_current_lin.png", bbox_inches='tight', pad_inches=0, dpi=900)
-    plt.show()
-    fig, ax = plt.subplots()
-    rel_err = j_log[:-1].cpu().numpy() / cott
-    ax.plot(ph_time, rel_err, '-g')
-    ax.set_xlabel("Time (s)")
-    ax.set_ylabel("$I / I_{Cottrell}$")
-    ax.grid()
+    plt.savefig("output/cottrell_current.png", bbox_inches='tight', pad_inches=0, dpi=900)
+    # plt.show()
+    # fig, ax = plt.subplots()
+    # rel_err = j_log[:-1].cpu().numpy() / cott
+    # ax.plot(ph_time, rel_err, '-g')
+    # ax.set_xlabel("Time (s)")
+    # ax.set_ylabel("$I / I_{Cottrell}$")
+    # ax.grid()
     # ax.set_ylim(0.8, 2.5)
-    plt.show()
+    # plt.show()
 
     if save_to_disk:
         # Stop thread for saving data
@@ -255,6 +259,27 @@ def save_data(q: queue.Queue):
         plt.close()
 
 
+def get_indices_to_keep(length, start_fine=0.2):
+    """
+    Returns indices to keep for plotting.
+
+    Parameters:
+    - length: Total number of data points.
+    - start_fine: Fraction of the data points at the start where we don't skip any points.
+
+    Returns:
+    - List of indices to keep.
+    """
+    start_indices = int(length * start_fine)
+    remaining = length - start_indices
+
+    # Calculate the required total sum to achieve the end_skip
+    skip_value = np.arange(remaining)
+    indices = np.concatenate((np.arange(start_indices), np.cumsum(skip_value) + start_indices))
+    indices = indices[indices < length]
+    return indices
+
+
 if __name__ == '__main__':
     print(f"omega: {omega_l}")
-    run(100, save_to_disk=True, interval=10, continue_last=False)
+    run(1500, save_to_disk=True, interval=10, continue_last=False)
