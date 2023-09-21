@@ -35,9 +35,17 @@ obstacle = generate_obstacle_tensor("input/cottrell_xlarge.png")
 nx, ny = obstacle.shape
 
 """Simulation parameters"""
+delay = 200  # Delay before applying voltage
+total_iterations = 2000
 # Diffusion coefficient
-omega_l = 1
-fo, dx, dt, d_l = convert_from_physical_params_pure_diff(cell_size_ph, d_ph, nx, omega_l)
+omega_l = 1.9
+w_e = omega_l
+# w_o = lambda_trt / (1/w_e - 0.5) + 0.5
+w_o = 1.6
+lambda_trt = (1/w_e - 0.5) * (1/w_o - 0.5)
+fo, dx, dt, d_l = convert_from_physical_params_pure_diff(cell_size_ph, d_ph, nx, omega_l, total_iterations)
+print(f"lambda_trt: {lambda_trt}")
+print(f"omega_e: {w_e}, omega_o: {w_o}")
 tau = 1 / omega_l
 j_log = torch.zeros(1, dtype=torch.float64, device=device)
 input("Press enter to start...")
@@ -75,11 +83,11 @@ fout_red = feq_red.clone()
 
 
 def macroscopic():
-    global rho_ox, rho_red, source_ox, source_red
-    # rho_ox = torch.clamp(fin_ox.sum(0) + source_ox / 2, 0, 2)
-    rho_ox = fin_ox.sum(0)  # + source_ox / 2
-    # rho_red = torch.clamp(fin_red.sum(0) + source_red / 2, 0, 2)
-    rho_red = fin_red.sum(0)  # + source_red / 2
+    global rho_ox, rho_red
+    rho_ox = torch.clamp(fin_ox.sum(0), 0, 1)
+    # rho_ox = fin_ox.sum(0)  # + source_ox / 2
+    rho_red = torch.clamp(fin_red.sum(0), 0, 1)
+    # rho_red = fin_red.sum(0)  # + source_red / 2
 
 
 def stream(fin, fout):
@@ -124,7 +132,7 @@ def stream(fin, fout):
 
 
 def step(i):
-    global fin_ox, fin_red, fout_ox, fout_red, source_ox, source_red, rho_ox, rho_red, jlog
+    global fin_ox, fin_red, fout_ox, fout_red, rho_ox, rho_red
     # Perform one LBM step
     # Outlet BC
     # Equiv. to neumann BC on concentration (null flux)
@@ -133,7 +141,6 @@ def step(i):
 
     macroscopic()
 
-    delay = 1000
     if i > delay:
         # Calculate generated current
         # Charge
@@ -152,8 +159,22 @@ def step(i):
     fin_red[right_col, 0, :] = feq_red[right_col, 0, :] + fin_red[left_col, 0, :] - feq_red[left_col, 0, :]
 
     # BGK collision
-    fout_ox = fin_ox - omega_l * (fin_ox - feq_ox)
-    fout_red = fin_red - omega_l * (fin_red - feq_red)
+    # Collision
+    f_plus = .5 * (fin_ox + fin_ox[c_op])
+    f_minus = .5 * (fin_ox - fin_ox[c_op])
+
+    feq_plus = .5 * (feq_ox + feq_ox[c_op])
+    feq_minus = .5 * (feq_ox - feq_ox[c_op])
+
+    fout_ox = fin_ox - w_o * (f_plus - feq_plus) - w_e * (f_minus - feq_minus)
+
+    g_plus = .5 * (fin_red + fin_red[c_op])
+    g_minus = .5 * (fin_red - fin_red[c_op])
+
+    geq_plus = .5 * (feq_red + feq_red[c_op])
+    geq_minus = .5 * (feq_red - feq_red[c_op])
+
+    fout_red = fin_red - w_o * (g_plus - geq_plus) - w_e * (g_minus - geq_minus)
 
     # Bounce-back
     fout_ox[:, obstacle] = fin_ox[c_op][:, obstacle]
@@ -166,13 +187,11 @@ def step(i):
 
 def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continue_last: bool = False):
     # Launches LBM simulation and a parallel thread for saving data to disk
-    global rho_ox, rho_red, fin_ox, fin_red, fout_ox, fout_red, j_log, e, dt
+    global rho_ox, rho_red, fin_ox, fin_red, fout_ox, fout_red, j_log, dt
 
     print(f"Simulating {iterations * dt} seconds")
 
     j_log = torch.zeros(iterations, dtype=torch.float64, device=device)
-
-    buffer_time = 200  # Buffer time for lbm stabilization
 
     if continue_last:  # Continue last computation
         rho_ox = torch.from_numpy(np.load("output/Electrochemical_last_rho_ox.npy")).to(device)
@@ -282,4 +301,4 @@ def get_indices_to_keep(length, start_fine=0.2):
 
 if __name__ == '__main__':
     print(f"omega: {omega_l}")
-    run(1500, save_to_disk=True, interval=10, continue_last=False)
+    run(total_iterations, save_to_disk=True, interval=100, continue_last=False)

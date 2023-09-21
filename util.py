@@ -160,14 +160,15 @@ def convert_from_physical_params_diff(total_length_ph, channel_width_ph, char_ve
     return pe, dx, dt, d_l
 
 
-def convert_from_physical_params_pure_diff(total_length_ph, diffusion_coeff_ph, lattice_size, omega_l):
+def convert_from_physical_params_pure_diff(total_length_ph, diffusion_coeff_ph, lattice_size, omega_l,
+                                           total_iterations):
     dx = total_length_ph / lattice_size
 
     tau_l = 1 / omega_l
     dt = (1 / 3) * ((tau_l - 0.5) * dx ** 2) / diffusion_coeff_ph
     d_l = get_lattice_viscosity_from_tau_l(tau_l)
 
-    fo = d_l * dt / (dx ** 2)  # Fourier number
+    fo = d_l * total_iterations / lattice_size  # Fourier number
     print("Simulation parameters (Diffusion):")
     print(f"Fo: {fo}")
     print(f"dt: {dt}")
