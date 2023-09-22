@@ -14,17 +14,17 @@ from util import *
 # instead of 0.5 use 1/(current_playback_length / target_playback_length)
 
 """Simulation parameters"""
-u_ph = 5e-3  # m/s ~ 5mm/s
+u_ph = 0.01  # m/s ~ 5mm/s
 visc_ph = 1.0035e-6  # m^2/s water at 25C
-inlet_width_ph = .23e-2  # m = .23cm
+inlet_width_ph = 0.00382  # m = .23cm
 re_ph = u_ph * inlet_width_ph / visc_ph  # Reynolds number
 cell_length_ph = 3e-2  # 3cm
 
 # Create obstacle tensor from numpy array`
-obstacle = generate_obstacle_tensor('input/mmrfbs/planar.png')
+obstacle = generate_obstacle_tensor('input/leveque.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-omega_l = 1
+omega_l = 1.8
 
 re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, inlet_width_ph, u_ph, visc_ph, nx, omega_l)
 input("Press enter to continue...")
@@ -110,7 +110,8 @@ def step():
     du.append(torch.norm(u - last_u).cpu().item())
     last_u = u.clone()
     # Impose conditions on macroscopic variables
-    u[0, 0, :] = ulb * torch.ones(ny, device=device).float()
+    # u[0, 0, :] = ulb * torch.ones(ny, device=device).float()
+    u[0, 0, 1:-1] = poiseuille_inlet(ulb, ny - 2)
     rho[0, :] = 1 / (1 - u[0, 0, :]) * (torch.sum(fin[center_col, 0, :], dim=0) +
                                                   2 * torch.sum(fin[left_col, 0, :], dim=0))
 
@@ -187,4 +188,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(40000, save_to_disk=True, interval=1000, continue_last=False)
+    run(40000, save_to_disk=True, interval=100, continue_last=False)

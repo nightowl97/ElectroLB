@@ -89,7 +89,7 @@ def save_data(q: queue.Queue, obstacle):
         # Plot both macroscopic variables
         fig, (ax0, ax1) = plt.subplots(2, 1)
         cax0 = ax0.imshow(velocity.cpu().numpy().transpose(), cmap=cmap)
-        cax1 = ax1.imshow(density.cpu().numpy().transpose(), cmap=cmap, vmin=0, vmax=1.5)
+        cax1 = ax1.imshow(density.cpu().numpy().transpose(), cmap=cmap)
         ax0.set_title(r"lattice velocity $u$")
         ax1.set_title(r"density $\rho$")
         ax0.axis("off")
@@ -176,3 +176,9 @@ def convert_from_physical_params_pure_diff(total_length_ph, diffusion_coeff_ph, 
     print(f"omega_l: {omega_l}")
     print(f"d_l: {d_l}")
     return fo, dx, dt, d_l
+
+
+def poiseuille_inlet(vmax, n):
+    y = torch.arange(n, device=device).float()
+    v = vmax * (4 / n) * y * (1 - y / n)
+    return v
