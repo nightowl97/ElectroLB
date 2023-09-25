@@ -157,7 +157,7 @@ def convert_from_physical_params_diff(total_length_ph, channel_width_ph, char_ve
     print(f"u_l: {u_l}")
     print(f"omega_l: {omega_l}")
     print(f"d_l: {d_l}")
-    return pe, dx, dt, d_l
+    return pe, dx, dt, d_l, u_l
 
 
 def convert_from_physical_params_pure_diff(total_length_ph, diffusion_coeff_ph, lattice_size, omega_l,

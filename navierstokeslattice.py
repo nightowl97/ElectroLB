@@ -21,10 +21,10 @@ re_ph = u_ph * inlet_width_ph / visc_ph  # Reynolds number
 cell_length_ph = 3e-2  # 3cm
 
 # Create obstacle tensor from numpy array`
-obstacle = generate_obstacle_tensor('input/leveque.png')
+obstacle = generate_obstacle_tensor('input/leveque_largear.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
-omega_l = 1.8
+omega_l = 1.
 
 re, dx, dt, ulb = convert_from_physical_params_ns(cell_length_ph, inlet_width_ph, u_ph, visc_ph, nx, omega_l)
 input("Press enter to continue...")
@@ -111,7 +111,8 @@ def step():
     last_u = u.clone()
     # Impose conditions on macroscopic variables
     # u[0, 0, :] = ulb * torch.ones(ny, device=device).float()
-    u[0, 0, 1:-1] = poiseuille_inlet(ulb, ny - 2)
+    u[0, 0, :] = 0
+    u[0, 0, 3:-3] = poiseuille_inlet(ulb, ny - 6)
     rho[0, :] = 1 / (1 - u[0, 0, :]) * (torch.sum(fin[center_col, 0, :], dim=0) +
                                                   2 * torch.sum(fin[left_col, 0, :], dim=0))
 
@@ -188,4 +189,4 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
 
 if __name__ == '__main__':
     print("Using device: ", device)
-    run(40000, save_to_disk=True, interval=100, continue_last=False)
+    run(10000, save_to_disk=True, interval=100, continue_last=False)
