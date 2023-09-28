@@ -18,8 +18,8 @@ z = 1  # Number of electrons transferred
 d_ph = 0.76e-7  # m^2/s Diffusion coefficient (Bard page 813)
 
 
-electrode = generate_electrode_tensor("input/leveque_largear.png")
-obstacle = generate_obstacle_tensor("input/leveque_largear.png")
+electrode = generate_electrode_tensor("input/levequev2.png")
+obstacle = generate_obstacle_tensor("input/levequev2.png")
 nx, ny = obstacle.shape
 v_field = torch.from_numpy(np.load("output/BaseLattice_last_u.npy")).to(device)
 
@@ -27,7 +27,7 @@ v_field = torch.from_numpy(np.load("output/BaseLattice_last_u.npy")).to(device)
 delay = 200  # Delay before applying voltage
 total_iterations = 40000
 # Diffusion coefficient
-omega_l = 1.95
+omega_l = 1.96
 w_e = omega_l
 lambda_trt = 1/12
 w_o = 1 / (lambda_trt / (1/w_e - 0.5) + 0.5)
@@ -228,24 +228,21 @@ def run(iterations: int, save_to_disk: bool = True, interval: int = 100, continu
     # Plot current density
     plt.show()
     fig, ax = plt.subplots()
-    x = np.linspace(1e-1, electrode.sum().cpu().numpy(), 1000)
-    lev = 0.67 * (d_ph**(2/3)) * (u_l/(ny*x))**(1/3)
-
-    plt.plot(j_log[iterations - delay - 1].cpu().numpy(), 'gs')
-    plt.plot(x, lev, 'r--')
+    # x = np.linspace(1e-1, electrode.sum().cpu().numpy(), 1000)
+    # lev = 0.67 * (d_l**(2/3)) * (u_l/(ny*x))**(1/3)
+    x = np.arange(1, electrode.sum().cpu().numpy() + 1)
+    sfc = cell_depth_ph * electrode.sum().cpu().numpy() * dx
+    avg_vel = torch.mean(v_field).cpu().numpy()
+    h = (ny - 3) * dx
+    lev = 0.9783 * (F * d_ph * concentration_ph / sfc) * (avg_vel * vel_ph / (h * d_ph * x * dx)) ** (1 / 3)
+    lbm_sol = F * (j_log[iterations - delay - 1] * concentration_ph) * dx / dt
+    plt.plot(lbm_sol.cpu().numpy() / np.mean(lbm_sol.cpu().numpy()), 'gs')
+    plt.plot(x, lev / np.mean(lev), 'r--')
     ax.set_ylabel("Flux")
     # plt.ylim([0, torch.max(j_log[iterations - delay - 1]).cpu().numpy() * 1.1])
     # ax.legend()
     # plt.savefig("output/cottrell_current.png", bbox_inches='tight', pad_inches=0, dpi=900)
     plt.show()
-    # fig, ax = plt.subplots()
-    # rel_err = j_log[:-1].cpu().numpy() / cott
-    # ax.plot(ph_time, rel_err, '-g')
-    # ax.set_xlabel("Time (s)")
-    # ax.set_ylabel("$I / I_{Cottrell}$")
-    # ax.grid()
-    # ax.set_ylim(0.8, 2.5)
-    # plt.show()
 
     if save_to_disk:
         # Stop thread for saving data

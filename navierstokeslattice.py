@@ -21,7 +21,7 @@ re_ph = u_ph * inlet_width_ph / visc_ph  # Reynolds number
 cell_length_ph = 3e-2  # 3cm
 
 # Create obstacle tensor from numpy array`
-obstacle = generate_obstacle_tensor('input/leveque_largear.png')
+obstacle = generate_obstacle_tensor('input/levequev2.png')
 obstacle = obstacle.clone().to(device)
 nx, ny = obstacle.shape  # Number of nodes in x and y directions
 omega_l = 1.
